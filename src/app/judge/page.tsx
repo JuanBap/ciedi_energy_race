@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import JudgeView from "@/components/judge/JudgeView";

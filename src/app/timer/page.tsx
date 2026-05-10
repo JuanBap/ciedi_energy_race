@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import TimerView from "@/components/timer/TimerView";

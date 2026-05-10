@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import LiveScoreboard from "@/components/live/LiveScoreboard";
 
+export const dynamic = "force-dynamic";
+
 const EVENT_ID = "00000000-0000-0000-0000-000000000001";
 
 export default async function LivePage() {
