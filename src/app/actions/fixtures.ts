@@ -126,3 +126,95 @@ export async function deleteFixture(testType: TestType) {
   revalidatePath("/admin/fixtures");
   return { success: true };
 }
+
+// Borra una sola manga (con sus heat_assignments y runs por cascade)
+export async function deleteHeat(heatId: string) {
+  await requireAdmin();
+  const supabase = await createClient();
+
+  const { data: heat } = await supabase
+    .from("heats")
+    .select("status")
+    .eq("id", heatId)
+    .single();
+
+  if (heat?.status === "active") {
+    return { error: "No se puede borrar una manga en curso. Ciérrala primero." };
+  }
+
+  const { error } = await supabase.from("heats").delete().eq("id", heatId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/admin/fixtures");
+  revalidatePath("/admin/heats");
+  return { success: true };
+}
+
+// Reemplaza completamente las asignaciones de una manga de velocidad
+export async function updateVelocityHeat(
+  heatId: string,
+  assignments: { team_id: string; lane: Lane }[]
+) {
+  await requireAdmin();
+  const supabase = await createClient();
+
+  const { data: heat } = await supabase
+    .from("heats")
+    .select("status")
+    .eq("id", heatId)
+    .single();
+
+  if (heat?.status === "active") {
+    return { error: "No se puede editar una manga en curso. Ciérrala primero." };
+  }
+
+  // Borra todas las asignaciones existentes y reinserta
+  const { error: delErr } = await supabase
+    .from("heat_assignments")
+    .delete()
+    .eq("heat_id", heatId);
+  if (delErr) return { error: delErr.message };
+
+  if (assignments.length > 0) {
+    const rows = assignments.map((a) => ({
+      heat_id: heatId,
+      team_id: a.team_id,
+      lane: a.lane,
+    }));
+    const { error: insErr } = await supabase.from("heat_assignments").insert(rows);
+    if (insErr) return { error: insErr.message };
+  }
+
+  revalidatePath("/admin/fixtures");
+  return { success: true };
+}
+
+// Reemplaza el equipo de una manga de versatilidad
+export async function updateVersatilityHeat(heatId: string, teamId: string) {
+  await requireAdmin();
+  const supabase = await createClient();
+
+  const { data: heat } = await supabase
+    .from("heats")
+    .select("status")
+    .eq("id", heatId)
+    .single();
+
+  if (heat?.status === "active") {
+    return { error: "No se puede editar una manga en curso. Ciérrala primero." };
+  }
+
+  const { error: delErr } = await supabase
+    .from("heat_assignments")
+    .delete()
+    .eq("heat_id", heatId);
+  if (delErr) return { error: delErr.message };
+
+  const { error: insErr } = await supabase
+    .from("heat_assignments")
+    .insert({ heat_id: heatId, team_id: teamId, lane: null });
+  if (insErr) return { error: insErr.message };
+
+  revalidatePath("/admin/fixtures");
+  return { success: true };
+}

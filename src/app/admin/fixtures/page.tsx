@@ -16,13 +16,13 @@ export default async function FixturesPage() {
         .order("name"),
       supabase
         .from("heats")
-        .select("*, heat_assignments(*, teams(name, school))")
+        .select("*, heat_assignments(*, teams(id, name, school, color_hex))")
         .eq("event_id", EVENT_ID)
         .eq("test_type", "velocity")
         .order("heat_number"),
       supabase
         .from("heats")
-        .select("*, heat_assignments(*, teams(name, school))")
+        .select("*, heat_assignments(*, teams(id, name, school, color_hex))")
         .eq("event_id", EVENT_ID)
         .eq("test_type", "versatility")
         .order("heat_number"),
