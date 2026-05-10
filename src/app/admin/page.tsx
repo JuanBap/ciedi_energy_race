@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import EventStatusControl from "@/components/admin/EventStatusControl";
+import DashboardStats from "@/components/admin/DashboardStats";
 
 const EVENT_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -41,16 +42,13 @@ export default async function AdminDashboard() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard title="Equipos" value={teamsCount ?? 0} />
-        <StatCard title="Mangas" value={heatsCount ?? 0} />
-        <StatCard title="Tiempos Registrados" value={runsCount ?? 0} />
-        <StatCard
-          title="Estado"
-          value={event?.status ?? "—"}
-          isText
-        />
-      </div>
+      <DashboardStats
+        eventId={EVENT_ID}
+        initialTeams={teamsCount ?? 0}
+        initialHeats={heatsCount ?? 0}
+        initialRuns={runsCount ?? 0}
+        status={event?.status ?? "—"}
+      />
 
       {event && <EventStatusControl currentStatus={event.status as "draft" | "active" | "finished"} />}
 
@@ -82,26 +80,5 @@ export default async function AdminDashboard() {
         </Card>
       </div>
     </div>
-  );
-}
-
-function StatCard({
-  title,
-  value,
-  isText = false,
-}: {
-  title: string;
-  value: number | string;
-  isText?: boolean;
-}) {
-  return (
-    <Card className="bg-zinc-900 border-zinc-700">
-      <CardContent className="pt-6">
-        <p className="text-zinc-400 text-xs uppercase tracking-wide">{title}</p>
-        <p className={`font-bold mt-1 ${isText ? "text-lg capitalize" : "text-3xl"} text-white`}>
-          {value}
-        </p>
-      </CardContent>
-    </Card>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { createClient } from "@/lib/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,9 +36,41 @@ const STATUS_COLORS: Record<string, string> = {
   reprogrammed: "bg-yellow-800 text-yellow-200",
 };
 
-export default function RunsManager({ runs }: { runs: Run[] }) {
+export default function RunsManager({ runs: initialRuns }: { runs: Run[] }) {
+  const [runs, setRuns] = useState<Run[]>(initialRuns);
   const [editRun, setEditRun] = useState<Run | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
+
+  const refetch = useCallback(async () => {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("runs")
+      .select(`
+        *,
+        heat_assignments(
+          lane,
+          teams(id, name, school, color_hex),
+          heats(heat_number, test_type, status)
+        )
+      `)
+      .order("created_at", { ascending: false });
+    if (data) setRuns(data.filter((r) => r.heat_assignments?.heats));
+  }, []);
+
+  // Mantener `runs` sincronizado si llegan nuevas props (SSR)
+  useEffect(() => { setRuns(initialRuns); }, [initialRuns]);
+
+  // Suscripción Realtime
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel("admin-runs")
+      .on("postgres_changes", { event: "*", schema: "public", table: "runs" }, refetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "heat_assignments" }, refetch)
+      .subscribe((s) => setConnected(s === "SUBSCRIBED"));
+    return () => { supabase.removeChannel(channel); };
+  }, [refetch]);
 
   const velocityRuns = runs.filter((r) => r.heat_assignments?.heats?.test_type === "velocity");
   const versatilityRuns = runs.filter((r) => r.heat_assignments?.heats?.test_type === "versatility");
@@ -68,6 +101,11 @@ export default function RunsManager({ runs }: { runs: Run[] }) {
 
   return (
     <div className="space-y-8">
+      <div className="flex items-center gap-2 text-xs text-zinc-500">
+        <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400" : "bg-zinc-600"}`} />
+        <span>{connected ? "Sincronizado en vivo" : "Conectando…"}</span>
+        <span className="text-zinc-600 ml-2">· {runs.length} tiempo(s) registrado(s)</span>
+      </div>
       <RunSection
         title="Velocidad"
         runs={velocityRuns}

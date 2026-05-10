@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { createClient } from "@/lib/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { setHeatStatus } from "@/app/actions/heats";
 import { toast } from "sonner";
 import { formatTime } from "@/lib/utils";
+
+const EVENT_ID = "00000000-0000-0000-0000-000000000001";
 
 interface Run {
   id: string;
@@ -40,27 +43,67 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "bg-red-700 text-white",
 };
 
-export default function HeatsManager({ heats }: { heats: Heat[] }) {
+export default function HeatsManager({ heats: initialHeats }: { heats: Heat[] }) {
+  const [heats, setHeats] = useState<Heat[]>(initialHeats);
+  const [connected, setConnected] = useState(false);
+
+  const refetch = useCallback(async () => {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("heats")
+      .select(`
+        *,
+        heat_assignments(
+          *,
+          teams(id, name, school, color_hex),
+          runs(*)
+        )
+      `)
+      .eq("event_id", EVENT_ID)
+      .order("test_type")
+      .order("heat_number");
+    if (data) setHeats(data);
+  }, []);
+
+  useEffect(() => { setHeats(initialHeats); }, [initialHeats]);
+
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel("admin-heats")
+      .on("postgres_changes", { event: "*", schema: "public", table: "heats" }, refetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "heat_assignments" }, refetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "runs" }, refetch)
+      .subscribe((s) => setConnected(s === "SUBSCRIBED"));
+    return () => { supabase.removeChannel(channel); };
+  }, [refetch]);
+
   const velocityHeats = heats.filter((h) => h.test_type === "velocity");
   const versatilityHeats = heats.filter((h) => h.test_type === "versatility");
 
   return (
-    <Tabs defaultValue="velocity">
-      <TabsList className="bg-zinc-800 border border-zinc-700">
-        <TabsTrigger value="velocity" className="data-[state=active]:bg-yellow-400 data-[state=active]:text-black">
-          Velocidad ({velocityHeats.length})
-        </TabsTrigger>
-        <TabsTrigger value="versatility" className="data-[state=active]:bg-yellow-400 data-[state=active]:text-black">
-          Versatilidad ({versatilityHeats.length})
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent value="velocity">
-        <HeatList heats={velocityHeats} />
-      </TabsContent>
-      <TabsContent value="versatility">
-        <HeatList heats={versatilityHeats} />
-      </TabsContent>
-    </Tabs>
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-xs text-zinc-500">
+        <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400" : "bg-zinc-600"}`} />
+        <span>{connected ? "Sincronizado en vivo" : "Conectando…"}</span>
+      </div>
+      <Tabs defaultValue="velocity">
+        <TabsList className="bg-zinc-800 border border-zinc-700">
+          <TabsTrigger value="velocity" className="data-[state=active]:bg-yellow-400 data-[state=active]:text-black">
+            Velocidad ({velocityHeats.length})
+          </TabsTrigger>
+          <TabsTrigger value="versatility" className="data-[state=active]:bg-yellow-400 data-[state=active]:text-black">
+            Versatilidad ({versatilityHeats.length})
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="velocity">
+          <HeatList heats={velocityHeats} />
+        </TabsContent>
+        <TabsContent value="versatility">
+          <HeatList heats={versatilityHeats} />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }
 
