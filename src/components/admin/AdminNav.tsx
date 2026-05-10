@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
@@ -23,9 +24,16 @@ export default function AdminNav({ profile }: { profile: SessionPayload }) {
   return (
     <header className="bg-zinc-900 border-b border-zinc-700 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-4">
-        <span className="font-bold text-yellow-400 text-sm whitespace-nowrap">
-          E5 Race
-        </span>
+        <Link href="/admin" className="shrink-0">
+          <Image
+            src="/e5-logo.jpg"
+            alt="E5 Energy Race 2026"
+            width={120}
+            height={40}
+            className="h-8 w-auto object-contain"
+            priority
+          />
+        </Link>
         <nav className="flex gap-1 overflow-x-auto flex-1">
           {navItems.map((item) => (
             <Link

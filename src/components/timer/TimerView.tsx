@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { logout } from "@/app/actions/auth";
@@ -170,10 +171,17 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
     <main className="min-h-screen bg-zinc-950 text-white flex flex-col">
       {/* Header */}
       <header className="bg-zinc-900 border-b border-zinc-700 px-4 py-3 flex items-center justify-between">
-        <div>
-          <span className="text-yellow-400 font-bold text-sm">E5 Race</span>
+        <div className="flex items-center gap-2">
+          <Image
+            src="/e5-logo.jpg"
+            alt="E5 Energy Race 2026"
+            width={120}
+            height={40}
+            className="h-7 w-auto object-contain"
+            priority
+          />
           {lane && (
-            <Badge className="ml-2 bg-blue-700 text-white text-xs">{lane}</Badge>
+            <Badge className="bg-blue-700 text-white text-xs">{lane}</Badge>
           )}
           {testType === "versatility" && (
             <Badge className="ml-2 bg-green-700 text-white text-xs">Versatilidad</Badge>

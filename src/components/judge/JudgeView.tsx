@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { logout } from "@/app/actions/auth";
@@ -137,9 +138,16 @@ export default function JudgeView({ profile, heats }: { profile: UserProfile; he
   return (
     <main className="min-h-screen bg-zinc-950 text-white flex flex-col">
       <header className="bg-zinc-900 border-b border-zinc-700 px-4 py-3 flex items-center justify-between">
-        <div>
-          <span className="text-yellow-400 font-bold text-sm">E5 Race</span>
-          <Badge className="ml-2 bg-green-700 text-white text-xs">Juez Versatilidad</Badge>
+        <div className="flex items-center gap-2">
+          <Image
+            src="/e5-logo.jpg"
+            alt="E5 Energy Race 2026"
+            width={120}
+            height={40}
+            className="h-7 w-auto object-contain"
+            priority
+          />
+          <Badge className="bg-green-700 text-white text-xs">Juez Versatilidad</Badge>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-zinc-400 text-xs">{profile.full_name ?? profile.email}</span>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { login } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,10 +28,15 @@ export default function LoginPage() {
     <main className="min-h-screen flex items-center justify-center bg-zinc-950 p-4">
       <Card className="w-full max-w-sm bg-zinc-900 border-zinc-700">
         <CardHeader className="text-center">
-          <p className="text-xs font-medium tracking-widest text-yellow-400 uppercase mb-1">
-            E5 Energy Race 2026
-          </p>
-          <CardTitle className="text-zinc-300 text-2xl">Acceso Operadores</CardTitle>
+          <Image
+            src="/e5-logo.jpg"
+            alt="E5 Energy Race 2026"
+            width={400}
+            height={130}
+            className="w-full h-auto object-contain mb-2"
+            priority
+          />
+          <CardTitle className="text-zinc-300 text-xl">Acceso Operadores</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
