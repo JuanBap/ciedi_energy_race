@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { logout } from "@/app/actions/auth";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
-import { formatTimePrecise } from "@/lib/utils";
+import { formatTime, formatTimePrecise } from "@/lib/utils";
 import type { UserProfile, TestType, Lane } from "@/types/database";
 
 interface Team {
@@ -23,6 +24,7 @@ interface Run {
   id: string;
   status: string;
   time_ms: number | null;
+  has_penalty_velocity: boolean;
 }
 
 interface HeatAssignment {
@@ -53,56 +55,128 @@ interface Props {
   lane: Lane | null;
 }
 
+const EVENT_ID = "00000000-0000-0000-0000-000000000001";
 const LS_KEY = "timer_backup";
+const TERMINAL_RUN_STATUSES = ["recorded", "failed", "reprogrammed"];
 
-export default function TimerView({ profile, assignment, heats, testType, lane }: Props) {
+export default function TimerView({ profile, assignment, heats: initialHeats, testType, lane }: Props) {
+  const [heats, setHeats] = useState<Heat[]>(initialHeats);
   const [running, setRunning] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [hasPenalty, setHasPenalty] = useState(false);
-  const [currentHeatAssignment, setCurrentHeatAssignment] = useState<HeatAssignment | null>(null);
+  const [activeHaId, setActiveHaId] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
+  const [connected, setConnected] = useState(false);
 
   const tStartRef = useRef<number>(0);
   const tEndRef = useRef<number>(0);
   const rafRef = useRef<number>(0);
 
-  // Pick the first available heat assignment, skipping ones already done in this session
-  useEffect(() => {
-    if (!currentHeatAssignment) {
-      for (const heat of heats) {
-        for (const ha of heat.heat_assignments) {
-          if (completedIds.has(ha.id)) continue;
-          const run = ha.runs?.[0];
-          if (!run || run.status === "pending") {
-            setCurrentHeatAssignment(ha);
-            return;
-          }
-        }
-      }
-    }
-  }, [heats, currentHeatAssignment, completedIds]);
+  // ── Estados derivados (claros y deterministas) ─────────────────────────────
+  // Solo nos importan heats que tengan al menos una asignación para nuestro carril.
+  const myHeats = useMemo(
+    () => heats.filter((h) => h.heat_assignments.length > 0),
+    [heats]
+  );
 
+  // Por cada heat asignado, obtenemos el "estado de mi run":
+  //   pending     → no hay run, o el run está en status=pending
+  //   completed   → el run está en recorded/failed/reprogrammed
+  function runState(ha: HeatAssignment): "pending" | "completed" {
+    const run = ha.runs?.[0];
+    if (!run || run.status === "pending") return "pending";
+    if (TERMINAL_RUN_STATUSES.includes(run.status)) return "completed";
+    return "pending";
+  }
+
+  // Manga activa = heat con status='active' donde mi run sigue pendiente.
+  const activeHeat = useMemo(() => {
+    return myHeats.find(
+      (h) => h.status === "active" && h.heat_assignments.some((ha) => runState(ha) === "pending")
+    ) ?? null;
+  }, [myHeats]);
+
+  // Heat assignment activa (la mía dentro del heat activo)
+  const activeAssignment = useMemo<HeatAssignment | null>(() => {
+    if (!activeHeat) return null;
+    return activeHeat.heat_assignments.find((ha) => runState(ha) === "pending") ?? null;
+  }, [activeHeat]);
+
+  // Próximas mangas pendientes (mi asignación sin run completado, heat no finalizado)
+  const upcomingHeats = useMemo(() => {
+    return myHeats
+      .filter((h) => h.id !== activeHeat?.id && h.status !== "finished")
+      .filter((h) => h.heat_assignments.some((ha) => runState(ha) === "pending"))
+      .sort((a, b) => a.heat_number - b.heat_number);
+  }, [myHeats, activeHeat]);
+
+  // Mangas ya completadas (mi run guardado)
+  const completedCount = useMemo(() => {
+    return myHeats.filter((h) =>
+      h.heat_assignments.some((ha) => runState(ha) === "completed")
+    ).length;
+  }, [myHeats]);
+
+  // Sincronizar `activeHaId` con la asignación activa actual (cuando NO estoy mostrando un submitted)
+  useEffect(() => {
+    if (submitted) return;
+    if (activeAssignment && activeAssignment.id !== activeHaId) {
+      setActiveHaId(activeAssignment.id);
+      setElapsedMs(0);
+      setHasPenalty(false);
+    } else if (!activeAssignment && activeHaId) {
+      setActiveHaId(null);
+    }
+  }, [activeAssignment, activeHaId, submitted]);
+
+  // ── Realtime: actualizar `heats` cuando cambien runs o heats ───────────────
+  const refetch = useCallback(async () => {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("heats")
+      .select(`*, heat_assignments(*, teams(id, name, school, color_hex, shield_url), runs(*))`)
+      .eq("event_id", EVENT_ID)
+      .eq("test_type", testType)
+      .order("heat_number");
+    if (data) {
+      const filtered = data.map((h) => ({
+        ...h,
+        heat_assignments: lane
+          ? h.heat_assignments.filter((ha: HeatAssignment) => ha.lane === lane)
+          : h.heat_assignments,
+      }));
+      setHeats(filtered);
+    }
+  }, [testType, lane]);
+
+  useEffect(() => { setHeats(initialHeats); }, [initialHeats]);
+
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel("timer-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "heats" }, refetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "heat_assignments" }, refetch)
+      .on("postgres_changes", { event: "*", schema: "public", table: "runs" }, refetch)
+      .subscribe((s) => setConnected(s === "SUBSCRIBED"));
+    return () => { supabase.removeChannel(channel); };
+  }, [refetch]);
+
+  // ── Cronómetro ─────────────────────────────────────────────────────────────
   function tick() {
     setElapsedMs(performance.now() - tStartRef.current);
     rafRef.current = requestAnimationFrame(tick);
   }
 
   function handleStart() {
-    if (running || submitted) return;
+    if (running || submitted || !activeAssignment) return;
     tStartRef.current = performance.now();
     setElapsedMs(0);
     setRunning(true);
     setHasPenalty(false);
-
-    // LocalStorage backup
-    localStorage.setItem(
-      LS_KEY,
-      JSON.stringify({ t_start: Date.now(), ha_id: currentHeatAssignment?.id })
-    );
-
+    localStorage.setItem(LS_KEY, JSON.stringify({ t_start: Date.now(), ha_id: activeAssignment.id }));
     rafRef.current = requestAnimationFrame(tick);
   }
 
@@ -116,14 +190,11 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
   }
 
   const handleSubmit = useCallback(async () => {
-    if (running || !currentHeatAssignment) return;
+    if (running || !activeAssignment) return;
     const ms = elapsedMs;
-
     setSubmitting(true);
     const supabase = createClient();
-
-    // Check if run exists or create it
-    const existingRun = currentHeatAssignment.runs?.[0];
+    const existingRun = activeAssignment.runs?.[0];
 
     let error;
     if (existingRun) {
@@ -139,7 +210,7 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
         .eq("id", existingRun.id));
     } else {
       ({ error } = await supabase.from("runs").insert({
-        heat_assignment_id: currentHeatAssignment.id,
+        heat_assignment_id: activeAssignment.id,
         time_ms: Math.round(ms),
         has_penalty_velocity: hasPenalty,
         status: "recorded",
@@ -150,36 +221,29 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
 
     if (error) {
       toast.error(`Error al guardar: ${error.message}`);
-      // Keep time in localStorage for retry
     } else {
       toast.success("Tiempo guardado ✓");
       localStorage.removeItem(LS_KEY);
-      setCompletedIds((prev) => {
-        const next = new Set(prev);
-        next.add(currentHeatAssignment.id);
-        return next;
-      });
       setSubmitted(true);
       setConfirmOpen(false);
+      // Realtime refrescará `heats`, ese run aparecerá como completado y
+      // la próxima vez que pase a la siguiente, el picker no lo seleccionará.
     }
     setSubmitting(false);
-  }, [running, currentHeatAssignment, elapsedMs, hasPenalty, profile.id]);
+  }, [running, activeAssignment, elapsedMs, hasPenalty, profile.id]);
 
   function handleNext() {
     setSubmitted(false);
     setElapsedMs(0);
     setHasPenalty(false);
-    setCurrentHeatAssignment(null);
+    setActiveHaId(null); // el effect de sincronización elegirá la siguiente
   }
 
   const totalWithPenalty = elapsedMs + (hasPenalty ? 10000 : 0);
-  const currentHeat = heats.find((h) =>
-    h.heat_assignments.some((ha) => ha.id === currentHeatAssignment?.id)
-  );
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <main className="min-h-screen bg-zinc-950 text-white flex flex-col overflow-x-hidden">
-      {/* Header — apretado en móvil */}
       <header className="bg-zinc-900 border-b border-zinc-700 px-3 sm:px-4 py-2 sm:py-3 flex items-center justify-between gap-2 sticky top-0 z-10">
         <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
           <Image
@@ -190,12 +254,14 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
             className="h-6 sm:h-7 w-auto object-contain shrink-0"
             priority
           />
-          {lane && (
-            <Badge className="bg-blue-700 text-white text-xs shrink-0">{lane}</Badge>
-          )}
+          {lane && <Badge className="bg-blue-700 text-white text-xs shrink-0">{lane}</Badge>}
           {testType === "versatility" && (
             <Badge className="bg-green-700 text-white text-xs shrink-0">Versatilidad</Badge>
           )}
+          <div className="hidden sm:flex items-center gap-1 ml-2 text-xs text-zinc-500">
+            <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400" : "bg-zinc-600"}`} />
+            <span>{connected ? "En vivo" : "Conectando…"}</span>
+          </div>
         </div>
         <div className="flex items-center gap-1 sm:gap-3 min-w-0 shrink-0">
           <span className="text-zinc-400 text-xs hidden sm:inline truncate max-w-[120px]">
@@ -209,156 +275,62 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
         </div>
       </header>
 
-      {/* Main content — sin justify-center para evitar scroll en móvil */}
       <div className="flex-1 flex flex-col items-center px-3 sm:px-6 py-4 sm:py-6 gap-4 sm:gap-6">
-        {!currentHeatAssignment ? (
-          <div className="text-center space-y-3 mt-12">
-            <p className="text-zinc-400 text-xl">Sin mangas asignadas</p>
-            <p className="text-zinc-600 text-sm">
-              Espera a que el admin active una manga o recarga la página.
-            </p>
-          </div>
+        {!assignment ? (
+          <EmptyState
+            title="Sin asignación de carril"
+            message="Tu usuario no tiene asignado un carril ni prueba para este evento. Pídele al admin que te asigne en la sección Operadores."
+          />
+        ) : myHeats.length === 0 ? (
+          <EmptyState
+            title="Sin mangas asignadas"
+            message={
+              lane
+                ? `No hay mangas con tu carril ${lane} en el fixture todavía. Pídele al admin que cargue el fixture de ${testType === "velocity" ? "velocidad" : "versatilidad"}.`
+                : "No hay mangas asignadas a tu rol. Pídele al admin que cargue el fixture."
+            }
+          />
+        ) : !activeAssignment && upcomingHeats.length === 0 ? (
+          <EmptyState
+            title="Mangas completadas"
+            message={`Has cronometrado todas tus ${completedCount} manga(s). ¡Buen trabajo!`}
+            tone="success"
+          />
+        ) : !activeAssignment ? (
+          <WaitingState upcomingHeats={upcomingHeats} lane={lane} testType={testType} />
         ) : (
-          <>
-            {/* Current heat info */}
-            <div className="text-center w-full max-w-sm">
-              <p className="text-zinc-400 text-xs sm:text-sm uppercase tracking-wider">
-                Manga {currentHeat?.heat_number} — {testType === "velocity" ? "Velocidad" : "Versatilidad"}
-                {lane && ` — ${lane}`}
-              </p>
-              {currentHeatAssignment.teams && (
-                <div className="mt-2 flex items-center justify-center gap-2 sm:gap-3">
-                  <div
-                    className="w-4 h-4 sm:w-5 sm:h-5 rounded-full shrink-0"
-                    style={{ backgroundColor: currentHeatAssignment.teams.color_hex }}
-                  />
-                  <p className="text-xl sm:text-2xl font-bold truncate">
-                    {currentHeatAssignment.teams.name}
-                  </p>
-                </div>
-              )}
-              <p className="text-zinc-400 text-xs sm:text-sm mt-1 truncate">
-                {currentHeatAssignment.teams?.school}
-              </p>
-            </div>
-
-            {/* Timer display — escala progresiva por viewport */}
-            <div className="text-center w-full">
-              <div
-                className={`font-mono text-6xl sm:text-7xl md:text-8xl font-bold tabular-nums transition-colors leading-none ${
-                  running
-                    ? "text-green-400"
-                    : submitted
-                    ? "text-blue-400"
-                    : elapsedMs > 0
-                    ? "text-white"
-                    : "text-zinc-600"
-                }`}
-              >
-                {formatTimePrecise(running ? elapsedMs : totalWithPenalty)}
-              </div>
-              {hasPenalty && (
-                <p className="text-red-400 font-bold text-base sm:text-lg mt-2">+10 SEG PENALIZACIÓN</p>
-              )}
-            </div>
-
-            {/* Controls */}
-            {!submitted ? (
-              <div className="flex flex-col items-center gap-3 sm:gap-4 w-full max-w-sm">
-                {!running ? (
-                  <Button
-                    onClick={handleStart}
-                    disabled={elapsedMs > 0}
-                    className="w-full h-20 sm:h-24 text-2xl sm:text-3xl font-bold bg-green-600 hover:bg-green-500 text-white rounded-2xl shadow-lg active:scale-95 transition-transform"
-                  >
-                    {elapsedMs > 0 ? "LISTO" : "START"}
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={handleStop}
-                    className="w-full h-20 sm:h-24 text-2xl sm:text-3xl font-bold bg-red-600 hover:bg-red-500 text-white rounded-2xl shadow-lg active:scale-95 transition-transform"
-                  >
-                    STOP
-                  </Button>
-                )}
-
-                {testType === "velocity" && !running && (
-                  <Button
-                    onClick={() => setHasPenalty((p) => !p)}
-                    className={`w-full h-14 sm:h-16 text-base sm:text-xl font-bold rounded-2xl active:scale-95 transition-all ${
-                      hasPenalty
-                        ? "bg-red-600 hover:bg-red-500 text-white"
-                        : "bg-zinc-700 hover:bg-zinc-600 text-zinc-200 border-2 border-zinc-500"
-                    }`}
-                  >
-                    {hasPenalty ? "✓ +10s ACTIVADO" : "+10s PENALIZACIÓN"}
-                  </Button>
-                )}
-
-                {elapsedMs > 0 && !running && (
-                  <Button
-                    onClick={() => setConfirmOpen(true)}
-                    disabled={submitting}
-                    className="w-full h-14 sm:h-16 text-base sm:text-xl font-bold bg-yellow-400 text-black hover:bg-yellow-300 rounded-2xl active:scale-95 transition-transform"
-                  >
-                    ENVIAR TIEMPO ✓
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <div className="text-center space-y-4 w-full max-w-sm">
-                <p className="text-green-400 text-lg sm:text-xl font-bold">✓ Tiempo registrado</p>
-                <Button
-                  onClick={handleNext}
-                  className="w-full h-14 text-lg sm:text-xl bg-yellow-400 text-black hover:bg-yellow-300 font-bold rounded-2xl active:scale-95 transition-transform"
-                >
-                  Siguiente equipo →
-                </Button>
-              </div>
-            )}
-
-            {/* Upcoming queue */}
-            <div className="w-full max-w-sm mt-2 sm:mt-4">
-              <p className="text-zinc-500 text-xs uppercase tracking-wider mb-2">
-                Próximas mangas
-              </p>
-              {heats.flatMap((h) =>
-                h.heat_assignments
-                  .filter((ha) => {
-                    if (completedIds.has(ha.id)) return false;
-                    const run = ha.runs?.[0];
-                    return ha.id !== currentHeatAssignment.id && (!run || run.status === "pending");
-                  })
-                  .map((ha) => (
-                    <div key={ha.id} className="flex items-center gap-2 py-1">
-                      {ha.teams && (
-                        <div
-                          className="w-3 h-3 rounded-full shrink-0"
-                          style={{ backgroundColor: ha.teams.color_hex }}
-                        />
-                      )}
-                      <span className="text-zinc-400 text-sm truncate">
-                        M{h.heat_number} — {ha.teams?.name}
-                      </span>
-                    </div>
-                  ))
-              )}
-            </div>
-          </>
+          <ActiveRunner
+            assignment={activeAssignment}
+            heat={activeHeat!}
+            testType={testType}
+            lane={lane}
+            running={running}
+            submitted={submitted}
+            submitting={submitting}
+            elapsedMs={elapsedMs}
+            hasPenalty={hasPenalty}
+            totalWithPenalty={totalWithPenalty}
+            onStart={handleStart}
+            onStop={handleStop}
+            onTogglePenalty={() => setHasPenalty((p) => !p)}
+            onOpenConfirm={() => setConfirmOpen(true)}
+            onNext={handleNext}
+            upcomingHeats={upcomingHeats}
+            completedCount={completedCount}
+            totalCount={myHeats.length}
+          />
         )}
       </div>
 
-      {/* Modal de confirmación de tiempo — ancho ajustado a móvil */}
       <Dialog open={confirmOpen} onOpenChange={(o) => !submitting && setConfirmOpen(o)}>
         <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md w-[calc(100vw-1.5rem)] p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="text-center text-lg sm:text-xl">Confirmar tiempo</DialogTitle>
             <DialogDescription className="text-center text-zinc-400 text-sm">
-              {currentHeatAssignment?.teams?.name}
-              {currentHeat && ` — M${currentHeat.heat_number}`}
+              {activeAssignment?.teams?.name}
+              {activeHeat && ` — M${activeHeat.heat_number}`}
             </DialogDescription>
           </DialogHeader>
-
           <div className="py-3 sm:py-4 text-center space-y-2 sm:space-y-3">
             <p className="text-zinc-400 text-sm">¿El tiempo registrado es correcto?</p>
             <div className="font-mono text-4xl sm:text-5xl font-bold tabular-nums text-yellow-400 leading-none">
@@ -368,7 +340,6 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
               <p className="text-red-400 text-xs sm:text-sm font-bold">incluye +10s de penalización</p>
             )}
           </div>
-
           <div className="grid grid-cols-2 gap-3 pt-1 sm:pt-2">
             <Button
               onClick={() => setConfirmOpen(false)}
@@ -389,5 +360,233 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
         </DialogContent>
       </Dialog>
     </main>
+  );
+}
+
+// ── Subcomponentes ─────────────────────────────────────────────────────────
+
+function EmptyState({
+  title,
+  message,
+  tone = "neutral",
+}: {
+  title: string;
+  message: string;
+  tone?: "neutral" | "success";
+}) {
+  return (
+    <div className="text-center space-y-3 mt-8 sm:mt-12 max-w-sm">
+      <p className={`text-xl font-bold ${tone === "success" ? "text-green-400" : "text-zinc-300"}`}>
+        {title}
+      </p>
+      <p className="text-zinc-500 text-sm leading-relaxed">{message}</p>
+    </div>
+  );
+}
+
+function WaitingState({
+  upcomingHeats,
+  lane,
+  testType,
+}: {
+  upcomingHeats: Heat[];
+  lane: Lane | null;
+  testType: TestType;
+}) {
+  const next = upcomingHeats[0];
+  const nextTeam = next?.heat_assignments[0]?.teams;
+
+  return (
+    <div className="text-center space-y-4 sm:space-y-6 mt-6 sm:mt-12 max-w-sm w-full">
+      <div>
+        <p className="text-yellow-400 text-sm uppercase tracking-wider font-medium animate-pulse">
+          Esperando admin
+        </p>
+        <p className="text-zinc-300 text-base sm:text-lg mt-2">
+          Ninguna de tus mangas está activa todavía.
+        </p>
+      </div>
+
+      {next && (
+        <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-4 space-y-2">
+          <p className="text-zinc-500 text-xs uppercase tracking-wider">Tu próxima manga</p>
+          <p className="text-yellow-400 text-3xl font-bold">M{next.heat_number}</p>
+          {nextTeam && (
+            <div className="flex items-center justify-center gap-2">
+              <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: nextTeam.color_hex }} />
+              <p className="text-white font-medium truncate">{nextTeam.name}</p>
+            </div>
+          )}
+          {nextTeam?.school && <p className="text-zinc-500 text-xs truncate">{nextTeam.school}</p>}
+        </div>
+      )}
+
+      {upcomingHeats.length > 1 && (
+        <div className="text-left bg-zinc-900/50 border border-zinc-800 rounded-xl p-3 space-y-1">
+          <p className="text-zinc-500 text-xs uppercase tracking-wider mb-1">Cola completa</p>
+          {upcomingHeats.map((h) => {
+            const t = h.heat_assignments[0]?.teams;
+            return (
+              <div key={h.id} className="flex items-center gap-2 py-1">
+                {t && <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: t.color_hex }} />}
+                <span className="text-zinc-400 text-sm truncate">
+                  M{h.heat_number} — {t?.name ?? "—"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActiveRunner({
+  assignment,
+  heat,
+  testType,
+  lane,
+  running,
+  submitted,
+  submitting,
+  elapsedMs,
+  hasPenalty,
+  totalWithPenalty,
+  onStart,
+  onStop,
+  onTogglePenalty,
+  onOpenConfirm,
+  onNext,
+  upcomingHeats,
+  completedCount,
+  totalCount,
+}: {
+  assignment: HeatAssignment;
+  heat: Heat;
+  testType: TestType;
+  lane: Lane | null;
+  running: boolean;
+  submitted: boolean;
+  submitting: boolean;
+  elapsedMs: number;
+  hasPenalty: boolean;
+  totalWithPenalty: number;
+  onStart: () => void;
+  onStop: () => void;
+  onTogglePenalty: () => void;
+  onOpenConfirm: () => void;
+  onNext: () => void;
+  upcomingHeats: Heat[];
+  completedCount: number;
+  totalCount: number;
+}) {
+  return (
+    <>
+      <div className="text-center w-full max-w-sm">
+        <p className="text-zinc-400 text-xs sm:text-sm uppercase tracking-wider">
+          Manga {heat.heat_number} — {testType === "velocity" ? "Velocidad" : "Versatilidad"}
+          {lane && ` — ${lane}`}
+        </p>
+        {assignment.teams && (
+          <div className="mt-2 flex items-center justify-center gap-2 sm:gap-3">
+            <div
+              className="w-4 h-4 sm:w-5 sm:h-5 rounded-full shrink-0"
+              style={{ backgroundColor: assignment.teams.color_hex }}
+            />
+            <p className="text-xl sm:text-2xl font-bold truncate">{assignment.teams.name}</p>
+          </div>
+        )}
+        <p className="text-zinc-400 text-xs sm:text-sm mt-1 truncate">{assignment.teams?.school}</p>
+        <p className="text-zinc-600 text-xs mt-2">
+          {completedCount} de {totalCount} mangas cronometradas
+        </p>
+      </div>
+
+      <div className="text-center w-full">
+        <div
+          className={`font-mono text-6xl sm:text-7xl md:text-8xl font-bold tabular-nums transition-colors leading-none ${
+            running ? "text-green-400" : submitted ? "text-blue-400" : elapsedMs > 0 ? "text-white" : "text-zinc-600"
+          }`}
+        >
+          {formatTimePrecise(running ? elapsedMs : totalWithPenalty)}
+        </div>
+        {hasPenalty && (
+          <p className="text-red-400 font-bold text-base sm:text-lg mt-2">+10 SEG PENALIZACIÓN</p>
+        )}
+      </div>
+
+      {!submitted ? (
+        <div className="flex flex-col items-center gap-3 sm:gap-4 w-full max-w-sm">
+          {!running ? (
+            <Button
+              onClick={onStart}
+              disabled={elapsedMs > 0}
+              className="w-full h-20 sm:h-24 text-2xl sm:text-3xl font-bold bg-green-600 hover:bg-green-500 text-white rounded-2xl shadow-lg active:scale-95 transition-transform"
+            >
+              {elapsedMs > 0 ? "LISTO" : "START"}
+            </Button>
+          ) : (
+            <Button
+              onClick={onStop}
+              className="w-full h-20 sm:h-24 text-2xl sm:text-3xl font-bold bg-red-600 hover:bg-red-500 text-white rounded-2xl shadow-lg active:scale-95 transition-transform"
+            >
+              STOP
+            </Button>
+          )}
+
+          {testType === "velocity" && !running && (
+            <Button
+              onClick={onTogglePenalty}
+              className={`w-full h-14 sm:h-16 text-base sm:text-xl font-bold rounded-2xl active:scale-95 transition-all ${
+                hasPenalty
+                  ? "bg-red-600 hover:bg-red-500 text-white"
+                  : "bg-zinc-700 hover:bg-zinc-600 text-zinc-200 border-2 border-zinc-500"
+              }`}
+            >
+              {hasPenalty ? "✓ +10s ACTIVADO" : "+10s PENALIZACIÓN"}
+            </Button>
+          )}
+
+          {elapsedMs > 0 && !running && (
+            <Button
+              onClick={onOpenConfirm}
+              disabled={submitting}
+              className="w-full h-14 sm:h-16 text-base sm:text-xl font-bold bg-yellow-400 text-black hover:bg-yellow-300 rounded-2xl active:scale-95 transition-transform"
+            >
+              ENVIAR TIEMPO ✓
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="text-center space-y-4 w-full max-w-sm">
+          <p className="text-green-400 text-lg sm:text-xl font-bold">✓ Tiempo registrado</p>
+          <Button
+            onClick={onNext}
+            className="w-full h-14 text-lg sm:text-xl bg-yellow-400 text-black hover:bg-yellow-300 font-bold rounded-2xl active:scale-95 transition-transform"
+          >
+            {upcomingHeats.length > 0 ? "Siguiente equipo →" : "Listo →"}
+          </Button>
+        </div>
+      )}
+
+      {upcomingHeats.length > 0 && (
+        <div className="w-full max-w-sm mt-2 sm:mt-4">
+          <p className="text-zinc-500 text-xs uppercase tracking-wider mb-2">
+            Próximas mangas ({upcomingHeats.length})
+          </p>
+          {upcomingHeats.map((h) => {
+            const t = h.heat_assignments[0]?.teams;
+            return (
+              <div key={h.id} className="flex items-center gap-2 py-1">
+                {t && <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: t.color_hex }} />}
+                <span className="text-zinc-400 text-sm truncate">
+                  M{h.heat_number} — {t?.name ?? "—"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }

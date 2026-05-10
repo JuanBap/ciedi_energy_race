@@ -9,7 +9,7 @@ export default async function TimerPage() {
   const profile = await requireRole(["timer", "admin"]);
   const supabase = await createClient();
 
-  // Get user's assignment
+  // Asignación del usuario (test_type + carril)
   const { data: assignment } = await supabase
     .from("user_assignments")
     .select("*")
@@ -17,10 +17,11 @@ export default async function TimerPage() {
     .eq("event_id", EVENT_ID)
     .single();
 
-  // Get active/pending heats for this test_type
   const testType = assignment?.test_type ?? "velocity";
   const lane = assignment?.lane ?? null;
 
+  // Traer TODAS las mangas del test_type (no filtrar por status aquí)
+  // — el cliente decide qué mostrar según estado + asignaciones del carril
   const { data: heats } = await supabase
     .from("heats")
     .select(`
@@ -33,16 +34,15 @@ export default async function TimerPage() {
     `)
     .eq("event_id", EVENT_ID)
     .eq("test_type", testType)
-    .in("status", ["pending", "active"])
     .order("heat_number");
 
-  // Filter heat_assignments by this timer's lane (for velocity)
-  const filteredHeats = heats?.map((heat) => ({
+  // Filtrar heat_assignments por carril del usuario (solo aplica a velocidad)
+  const filteredHeats = (heats ?? []).map((heat) => ({
     ...heat,
     heat_assignments: lane
       ? heat.heat_assignments.filter((ha: { lane: string | null }) => ha.lane === lane)
       : heat.heat_assignments,
-  })) ?? [];
+  }));
 
   return (
     <TimerView
