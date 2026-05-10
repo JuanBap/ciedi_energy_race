@@ -178,39 +178,41 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
   );
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-white flex flex-col">
-      {/* Header */}
-      <header className="bg-zinc-900 border-b border-zinc-700 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+    <main className="min-h-screen bg-zinc-950 text-white flex flex-col overflow-x-hidden">
+      {/* Header — apretado en móvil */}
+      <header className="bg-zinc-900 border-b border-zinc-700 px-3 sm:px-4 py-2 sm:py-3 flex items-center justify-between gap-2 sticky top-0 z-10">
+        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
           <Image
             src="/e5-logo.jpg"
             alt="E5 Energy Race 2026"
             width={120}
             height={40}
-            className="h-7 w-auto object-contain"
+            className="h-6 sm:h-7 w-auto object-contain shrink-0"
             priority
           />
           {lane && (
-            <Badge className="bg-blue-700 text-white text-xs">{lane}</Badge>
+            <Badge className="bg-blue-700 text-white text-xs shrink-0">{lane}</Badge>
           )}
           {testType === "versatility" && (
-            <Badge className="ml-2 bg-green-700 text-white text-xs">Versatilidad</Badge>
+            <Badge className="bg-green-700 text-white text-xs shrink-0">Versatilidad</Badge>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-zinc-400 text-xs">{profile.full_name ?? profile.email}</span>
+        <div className="flex items-center gap-1 sm:gap-3 min-w-0 shrink-0">
+          <span className="text-zinc-400 text-xs hidden sm:inline truncate max-w-[120px]">
+            {profile.full_name ?? profile.email}
+          </span>
           <form action={logout}>
-            <Button type="submit" variant="ghost" size="sm" className="text-zinc-400 text-xs">
+            <Button type="submit" variant="ghost" size="sm" className="text-zinc-400 text-xs h-8 px-2">
               Salir
             </Button>
           </form>
         </div>
       </header>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6">
+      {/* Main content — sin justify-center para evitar scroll en móvil */}
+      <div className="flex-1 flex flex-col items-center px-3 sm:px-6 py-4 sm:py-6 gap-4 sm:gap-6">
         {!currentHeatAssignment ? (
-          <div className="text-center space-y-3">
+          <div className="text-center space-y-3 mt-12">
             <p className="text-zinc-400 text-xl">Sin mangas asignadas</p>
             <p className="text-zinc-600 text-sm">
               Espera a que el admin active una manga o recarga la página.
@@ -219,29 +221,31 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
         ) : (
           <>
             {/* Current heat info */}
-            <div className="text-center">
-              <p className="text-zinc-400 text-sm uppercase tracking-wider">
+            <div className="text-center w-full max-w-sm">
+              <p className="text-zinc-400 text-xs sm:text-sm uppercase tracking-wider">
                 Manga {currentHeat?.heat_number} — {testType === "velocity" ? "Velocidad" : "Versatilidad"}
                 {lane && ` — ${lane}`}
               </p>
               {currentHeatAssignment.teams && (
-                <div className="mt-2 flex items-center justify-center gap-3">
+                <div className="mt-2 flex items-center justify-center gap-2 sm:gap-3">
                   <div
-                    className="w-5 h-5 rounded-full"
+                    className="w-4 h-4 sm:w-5 sm:h-5 rounded-full shrink-0"
                     style={{ backgroundColor: currentHeatAssignment.teams.color_hex }}
                   />
-                  <p className="text-2xl font-bold">{currentHeatAssignment.teams.name}</p>
+                  <p className="text-xl sm:text-2xl font-bold truncate">
+                    {currentHeatAssignment.teams.name}
+                  </p>
                 </div>
               )}
-              <p className="text-zinc-400 text-sm mt-1">
+              <p className="text-zinc-400 text-xs sm:text-sm mt-1 truncate">
                 {currentHeatAssignment.teams?.school}
               </p>
             </div>
 
-            {/* Timer display */}
-            <div className="text-center">
+            {/* Timer display — escala progresiva por viewport */}
+            <div className="text-center w-full">
               <div
-                className={`font-mono text-7xl sm:text-8xl font-bold tabular-nums transition-colors ${
+                className={`font-mono text-6xl sm:text-7xl md:text-8xl font-bold tabular-nums transition-colors leading-none ${
                   running
                     ? "text-green-400"
                     : submitted
@@ -254,25 +258,25 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
                 {formatTimePrecise(running ? elapsedMs : totalWithPenalty)}
               </div>
               {hasPenalty && (
-                <p className="text-red-400 font-bold text-lg mt-2">+10 SEG PENALIZACIÓN</p>
+                <p className="text-red-400 font-bold text-base sm:text-lg mt-2">+10 SEG PENALIZACIÓN</p>
               )}
             </div>
 
             {/* Controls */}
             {!submitted ? (
-              <div className="flex flex-col items-center gap-4 w-full max-w-sm">
+              <div className="flex flex-col items-center gap-3 sm:gap-4 w-full max-w-sm">
                 {!running ? (
                   <Button
                     onClick={handleStart}
                     disabled={elapsedMs > 0}
-                    className="w-full h-24 text-3xl font-bold bg-green-600 hover:bg-green-500 text-white rounded-2xl shadow-lg active:scale-95 transition-transform"
+                    className="w-full h-20 sm:h-24 text-2xl sm:text-3xl font-bold bg-green-600 hover:bg-green-500 text-white rounded-2xl shadow-lg active:scale-95 transition-transform"
                   >
                     {elapsedMs > 0 ? "LISTO" : "START"}
                   </Button>
                 ) : (
                   <Button
                     onClick={handleStop}
-                    className="w-full h-24 text-3xl font-bold bg-red-600 hover:bg-red-500 text-white rounded-2xl shadow-lg active:scale-95 transition-transform"
+                    className="w-full h-20 sm:h-24 text-2xl sm:text-3xl font-bold bg-red-600 hover:bg-red-500 text-white rounded-2xl shadow-lg active:scale-95 transition-transform"
                   >
                     STOP
                   </Button>
@@ -281,7 +285,7 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
                 {testType === "velocity" && !running && (
                   <Button
                     onClick={() => setHasPenalty((p) => !p)}
-                    className={`w-full h-16 text-xl font-bold rounded-2xl active:scale-95 transition-all ${
+                    className={`w-full h-14 sm:h-16 text-base sm:text-xl font-bold rounded-2xl active:scale-95 transition-all ${
                       hasPenalty
                         ? "bg-red-600 hover:bg-red-500 text-white"
                         : "bg-zinc-700 hover:bg-zinc-600 text-zinc-200 border-2 border-zinc-500"
@@ -295,18 +299,18 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
                   <Button
                     onClick={() => setConfirmOpen(true)}
                     disabled={submitting}
-                    className="w-full h-16 text-xl font-bold bg-yellow-400 text-black hover:bg-yellow-300 rounded-2xl active:scale-95 transition-transform"
+                    className="w-full h-14 sm:h-16 text-base sm:text-xl font-bold bg-yellow-400 text-black hover:bg-yellow-300 rounded-2xl active:scale-95 transition-transform"
                   >
                     ENVIAR TIEMPO ✓
                   </Button>
                 )}
               </div>
             ) : (
-              <div className="text-center space-y-4">
-                <p className="text-green-400 text-xl font-bold">✓ Tiempo registrado</p>
+              <div className="text-center space-y-4 w-full max-w-sm">
+                <p className="text-green-400 text-lg sm:text-xl font-bold">✓ Tiempo registrado</p>
                 <Button
                   onClick={handleNext}
-                  className="bg-yellow-400 text-black hover:bg-yellow-300 font-bold px-8"
+                  className="w-full h-14 text-lg sm:text-xl bg-yellow-400 text-black hover:bg-yellow-300 font-bold rounded-2xl active:scale-95 transition-transform"
                 >
                   Siguiente equipo →
                 </Button>
@@ -314,7 +318,7 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
             )}
 
             {/* Upcoming queue */}
-            <div className="w-full max-w-sm mt-4">
+            <div className="w-full max-w-sm mt-2 sm:mt-4">
               <p className="text-zinc-500 text-xs uppercase tracking-wider mb-2">
                 Próximas mangas
               </p>
@@ -329,11 +333,11 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
                     <div key={ha.id} className="flex items-center gap-2 py-1">
                       {ha.teams && (
                         <div
-                          className="w-3 h-3 rounded-full"
+                          className="w-3 h-3 rounded-full shrink-0"
                           style={{ backgroundColor: ha.teams.color_hex }}
                         />
                       )}
-                      <span className="text-zinc-400 text-sm">
+                      <span className="text-zinc-400 text-sm truncate">
                         M{h.heat_number} — {ha.teams?.name}
                       </span>
                     </div>
@@ -344,40 +348,40 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
         )}
       </div>
 
-      {/* Modal de confirmación de tiempo */}
+      {/* Modal de confirmación de tiempo — ancho ajustado a móvil */}
       <Dialog open={confirmOpen} onOpenChange={(o) => !submitting && setConfirmOpen(o)}>
-        <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md">
+        <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md w-[calc(100vw-1.5rem)] p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle className="text-center text-xl">Confirmar tiempo</DialogTitle>
-            <DialogDescription className="text-center text-zinc-400">
+            <DialogTitle className="text-center text-lg sm:text-xl">Confirmar tiempo</DialogTitle>
+            <DialogDescription className="text-center text-zinc-400 text-sm">
               {currentHeatAssignment?.teams?.name}
               {currentHeat && ` — M${currentHeat.heat_number}`}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="py-4 text-center space-y-3">
+          <div className="py-3 sm:py-4 text-center space-y-2 sm:space-y-3">
             <p className="text-zinc-400 text-sm">¿El tiempo registrado es correcto?</p>
-            <div className="font-mono text-5xl font-bold tabular-nums text-yellow-400">
+            <div className="font-mono text-4xl sm:text-5xl font-bold tabular-nums text-yellow-400 leading-none">
               {formatTimePrecise(totalWithPenalty)}
             </div>
             {hasPenalty && (
-              <p className="text-red-400 text-sm font-bold">incluye +10s de penalización</p>
+              <p className="text-red-400 text-xs sm:text-sm font-bold">incluye +10s de penalización</p>
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 pt-2">
+          <div className="grid grid-cols-2 gap-3 pt-1 sm:pt-2">
             <Button
               onClick={() => setConfirmOpen(false)}
               disabled={submitting}
               variant="outline"
-              className="h-14 text-lg font-bold border-zinc-600 text-zinc-300 hover:bg-zinc-800"
+              className="h-12 sm:h-14 text-base sm:text-lg font-bold border-zinc-600 text-zinc-300 hover:bg-zinc-800"
             >
               NO
             </Button>
             <Button
               onClick={handleSubmit}
               disabled={submitting}
-              className="h-14 text-lg font-bold bg-green-600 hover:bg-green-500 text-white"
+              className="h-12 sm:h-14 text-base sm:text-lg font-bold bg-green-600 hover:bg-green-500 text-white"
             >
               {submitting ? "Enviando..." : "SÍ"}
             </Button>
