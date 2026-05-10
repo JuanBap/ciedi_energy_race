@@ -92,8 +92,14 @@ create table heat_assignments (
   id      uuid      primary key default gen_random_uuid(),
   heat_id uuid      not null references heats(id) on delete cascade,
   team_id uuid      not null references teams(id) on delete cascade,
-  lane    lane_type
+  lane    lane_type,
+  unique (heat_id, team_id)
 );
+
+-- Un carril no puede tener dos equipos en la misma manga (solo aplica si lane no es null)
+create unique index heat_assignments_heat_lane_unique
+  on heat_assignments (heat_id, lane)
+  where lane is not null;
 
 -- ============================================================
 -- TIEMPOS / RUNS
