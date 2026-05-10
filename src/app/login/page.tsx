@@ -30,7 +30,7 @@ export default function LoginPage() {
           <p className="text-xs font-medium tracking-widest text-yellow-400 uppercase mb-1">
             E5 Energy Race 2026
           </p>
-          <CardTitle className="text-white text-2xl">Acceso Operadores</CardTitle>
+          <CardTitle className="text-zinc-300 text-2xl">Acceso Operadores</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
