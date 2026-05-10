@@ -1,54 +1,35 @@
-import { createServerClient } from "@supabase/ssr";
+import { jwtVerify } from "jose";
 import { NextResponse, type NextRequest } from "next/server";
 
+const SESSION_COOKIE = "e5_session";
+const secret = new TextEncoder().encode(
+  process.env.SESSION_SECRET ?? "e5-race-2026-super-secret-key-ciedi"
+);
+
+async function getRole(request: NextRequest): Promise<string | null> {
+  const token = request.cookies.get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, secret);
+    return (payload as { role?: string }).role ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          );
-          supabaseResponse = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   const { pathname } = request.nextUrl;
 
-  // Public routes
+  // Rutas públicas
   if (pathname === "/" || pathname === "/live" || pathname === "/login") {
-    return supabaseResponse;
+    return NextResponse.next();
   }
 
-  // Require auth for protected routes
-  if (!user) {
+  const role = await getRole(request);
+
+  if (!role) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
-
-  // Check role-based access
-  const { data: profile } = await supabase
-    .from("user_profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  const role = profile?.role;
 
   if (pathname.startsWith("/admin") && role !== "admin") {
     return NextResponse.redirect(new URL("/login", request.url));
@@ -62,7 +43,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  return supabaseResponse;
+  return NextResponse.next();
 }
 
 export const config = {
