@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
-import type { UserProfile } from "@/types/database";
+import type { SessionPayload } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -17,7 +17,7 @@ const navItems = [
   { href: "/admin/users", label: "Operadores" },
 ];
 
-export default function AdminNav({ profile }: { profile: UserProfile }) {
+export default function AdminNav({ profile }: { profile: SessionPayload }) {
   const pathname = usePathname();
 
   return (

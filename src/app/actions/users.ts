@@ -1,8 +1,9 @@
 "use server";
 
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import bcrypt from "bcryptjs";
 import type { UserRole, TestType, Lane } from "@/types/database";
 
 const EVENT_ID = "00000000-0000-0000-0000-000000000001";
@@ -14,25 +15,35 @@ export async function createOperator(
   fullName: string
 ) {
   await requireAdmin();
-  const adminClient = await createAdminClient();
+  const supabase = await createClient();
 
-  const { data, error } = await adminClient.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { role },
+  const password_hash = await bcrypt.hash(password, 10);
+
+  const { error } = await supabase.from("users").insert({
+    email: email.trim().toLowerCase(),
+    password_hash,
+    role,
+    full_name: fullName,
   });
 
   if (error) return { error: error.message };
-
-  // Update profile with full name and role
-  await adminClient
-    .from("user_profiles")
-    .update({ role, full_name: fullName })
-    .eq("id", data.user.id);
-
   revalidatePath("/admin/users");
-  return { success: true, userId: data.user.id };
+  return { success: true };
+}
+
+export async function changePassword(userId: string, newPassword: string) {
+  await requireAdmin();
+  const supabase = await createClient();
+
+  const password_hash = await bcrypt.hash(newPassword, 10);
+  const { error } = await supabase
+    .from("users")
+    .update({ password_hash })
+    .eq("id", userId);
+
+  if (error) return { error: error.message };
+  revalidatePath("/admin/users");
+  return { success: true };
 }
 
 export async function assignUserToEvent(
@@ -55,9 +66,9 @@ export async function assignUserToEvent(
 
 export async function deleteOperator(userId: string) {
   await requireAdmin();
-  const adminClient = await createAdminClient();
+  const supabase = await createClient();
 
-  const { error } = await adminClient.auth.admin.deleteUser(userId);
+  const { error } = await supabase.from("users").delete().eq("id", userId);
   if (error) return { error: error.message };
 
   revalidatePath("/admin/users");
