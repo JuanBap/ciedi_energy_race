@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { logout } from "@/app/actions/auth";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
@@ -61,16 +62,19 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
   const [currentHeatAssignment, setCurrentHeatAssignment] = useState<HeatAssignment | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
 
   const tStartRef = useRef<number>(0);
   const tEndRef = useRef<number>(0);
   const rafRef = useRef<number>(0);
 
-  // Pick the first available heat assignment
+  // Pick the first available heat assignment, skipping ones already done in this session
   useEffect(() => {
     if (!currentHeatAssignment) {
       for (const heat of heats) {
         for (const ha of heat.heat_assignments) {
+          if (completedIds.has(ha.id)) continue;
           const run = ha.runs?.[0];
           if (!run || run.status === "pending") {
             setCurrentHeatAssignment(ha);
@@ -79,7 +83,7 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
         }
       }
     }
-  }, [heats, currentHeatAssignment]);
+  }, [heats, currentHeatAssignment, completedIds]);
 
   function tick() {
     setElapsedMs(performance.now() - tStartRef.current);
@@ -150,7 +154,13 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
     } else {
       toast.success("Tiempo guardado ✓");
       localStorage.removeItem(LS_KEY);
+      setCompletedIds((prev) => {
+        const next = new Set(prev);
+        next.add(currentHeatAssignment.id);
+        return next;
+      });
       setSubmitted(true);
+      setConfirmOpen(false);
     }
     setSubmitting(false);
   }, [running, currentHeatAssignment, elapsedMs, hasPenalty, profile.id]);
@@ -283,11 +293,11 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
 
                 {elapsedMs > 0 && !running && (
                   <Button
-                    onClick={handleSubmit}
+                    onClick={() => setConfirmOpen(true)}
                     disabled={submitting}
                     className="w-full h-16 text-xl font-bold bg-yellow-400 text-black hover:bg-yellow-300 rounded-2xl active:scale-95 transition-transform"
                   >
-                    {submitting ? "Enviando..." : "ENVIAR TIEMPO ✓"}
+                    ENVIAR TIEMPO ✓
                   </Button>
                 )}
               </div>
@@ -311,6 +321,7 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
               {heats.flatMap((h) =>
                 h.heat_assignments
                   .filter((ha) => {
+                    if (completedIds.has(ha.id)) return false;
                     const run = ha.runs?.[0];
                     return ha.id !== currentHeatAssignment.id && (!run || run.status === "pending");
                   })
@@ -332,6 +343,47 @@ export default function TimerView({ profile, assignment, heats, testType, lane }
           </>
         )}
       </div>
+
+      {/* Modal de confirmación de tiempo */}
+      <Dialog open={confirmOpen} onOpenChange={(o) => !submitting && setConfirmOpen(o)}>
+        <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-center text-xl">Confirmar tiempo</DialogTitle>
+            <DialogDescription className="text-center text-zinc-400">
+              {currentHeatAssignment?.teams?.name}
+              {currentHeat && ` — M${currentHeat.heat_number}`}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4 text-center space-y-3">
+            <p className="text-zinc-400 text-sm">¿El tiempo registrado es correcto?</p>
+            <div className="font-mono text-5xl font-bold tabular-nums text-yellow-400">
+              {formatTimePrecise(totalWithPenalty)}
+            </div>
+            {hasPenalty && (
+              <p className="text-red-400 text-sm font-bold">incluye +10s de penalización</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <Button
+              onClick={() => setConfirmOpen(false)}
+              disabled={submitting}
+              variant="outline"
+              className="h-14 text-lg font-bold border-zinc-600 text-zinc-300 hover:bg-zinc-800"
+            >
+              NO
+            </Button>
+            <Button
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="h-14 text-lg font-bold bg-green-600 hover:bg-green-500 text-white"
+            >
+              {submitting ? "Enviando..." : "SÍ"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
