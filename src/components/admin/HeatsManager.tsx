@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { setHeatStatus } from "@/app/actions/heats";
 import { toast } from "sonner";
-import { formatTime } from "@/lib/utils";
+import { formatTimePrecise } from "@/lib/utils";
 
 const EVENT_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -192,7 +192,7 @@ function HeatList({ heats }: { heats: Heat[] }) {
                   <div className="text-right text-sm font-mono">
                     {totalMs != null ? (
                       <span className={`${run?.has_penalty_velocity ? "text-red-400" : "text-green-400"}`}>
-                        {formatTime(totalMs)}
+                        {formatTimePrecise(totalMs)}
                         {run?.has_penalty_velocity && " +10s"}
                       </span>
                     ) : (

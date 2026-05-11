@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { updateRun, markRunFailed, assignWorstTimePlusTen, reprogramRun } from "@/app/actions/runs";
 import { toast } from "sonner";
-import { formatTime } from "@/lib/utils";
+import { formatTimePrecise } from "@/lib/utils";
 
 interface Run {
   id: string;
@@ -202,7 +202,7 @@ function RunSection({
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-white">
-                      {totalMs != null ? formatTime(totalMs) : "—"}
+                      {totalMs != null ? formatTimePrecise(totalMs) : "—"}
                     </TableCell>
                     <TableCell className="text-sm">
                       {run.has_penalty_velocity && (

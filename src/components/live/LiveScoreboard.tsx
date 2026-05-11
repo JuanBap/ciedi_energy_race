@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/components/ui/badge";
-import { formatTime } from "@/lib/utils";
+import { formatTimePrecise } from "@/lib/utils";
 import type { RankingRow } from "@/types/database";
 
 interface Run {
@@ -132,6 +132,16 @@ export default function LiveScoreboard({
 
   // Filtros: por test_type y por categoría (deducida del primer equipo del heat)
   const filteredHeats = useMemo(() => {
+    // Orden de aparición: activas primero, luego pendientes (lo más reciente
+    // arriba), después finalizadas y al final las falladas
+    const STATUS_ORDER: Record<string, number> = {
+      active: 0,
+      pending: 1,
+      reprogrammed: 2,
+      finished: 3,
+      failed: 4,
+    };
+
     return heats
       .filter((h) => testFilter === "all" || h.test_type === testFilter)
       .filter((h) => {
@@ -146,7 +156,20 @@ export default function LiveScoreboard({
           const ob = LANE_ORDER[b.lane ?? ""] ?? 99;
           return oa - ob;
         }),
-      }));
+      }))
+      .sort((a, b) => {
+        // 1) Por estado
+        const sa = STATUS_ORDER[a.status] ?? 99;
+        const sb = STATUS_ORDER[b.status] ?? 99;
+        if (sa !== sb) return sa - sb;
+        // 2) Dentro del mismo estado:
+        //    - 'finished' y 'failed' (ya corrieron): orden inverso (más reciente primero)
+        //    - resto (active/pending): orden natural (próxima a correr primero)
+        if (a.status === "finished" || a.status === "failed") {
+          return b.heat_number - a.heat_number;
+        }
+        return a.heat_number - b.heat_number;
+      });
   }, [heats, testFilter, categoryFilter]);
 
   const pushcartsPodium = podium.filter((r) => r.category_slug === "pushcarts").slice(0, 3);
@@ -385,7 +408,7 @@ function LaneCard({
           {totalMs !== null ? (
             <div className="flex items-end gap-2">
               <span className="font-mono text-2xl sm:text-3xl font-black tabular-nums text-yellow-400 leading-none">
-                {formatTime(totalMs)}
+                {formatTimePrecise(totalMs)}
               </span>
               {run?.has_penalty_velocity && (
                 <Badge className="bg-red-600 text-white text-[10px] font-bold mb-1">+10s</Badge>
