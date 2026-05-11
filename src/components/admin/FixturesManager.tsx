@@ -13,7 +13,7 @@ import {
   assignLane,
   clearLane,
   resetLaneRun,
-  resetHeatRuns,
+  restartHeat,
 } from "@/app/actions/fixtures";
 import { setHeatStatus } from "@/app/actions/heats";
 import { toast } from "sonner";
@@ -126,7 +126,7 @@ function VelocityFixture({
   const [loading, setLoading] = useState(false);
   const [editingCell, setEditingCell] = useState<{ heat: Heat; lane: Lane } | null>(null);
   const [deletingHeat, setDeletingHeat] = useState<Heat | null>(null);
-  const [resettingHeat, setResettingHeat] = useState<Heat | null>(null);
+  const [restartingHeat, setRestartingHeat] = useState<Heat | null>(null);
 
   const startHeatNum = heats.length > 0 ? Math.max(...heats.map((h) => h.heat_number)) + 1 : 1;
 
@@ -226,20 +226,18 @@ function VelocityFixture({
                               Cerrar
                             </Button>
                           )}
-                          {(heat.status === "finished" || heat.status === "failed") && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setResettingHeat(heat)}
-                              className="h-7 text-xs border-yellow-700 text-yellow-400 hover:bg-yellow-900/30"
-                            >
-                              🔁 Repetir
-                            </Button>
-                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setRestartingHeat(heat)}
+                            className="h-7 text-xs border-yellow-700 text-yellow-400 hover:bg-yellow-900/30"
+                            title="Invalidar tiempos y volver la manga a Pendiente"
+                          >
+                            🔄 Reiniciar
+                          </Button>
                           <Button
                             size="sm"
                             variant="destructive"
-                            disabled={isActive}
                             onClick={() => setDeletingHeat(heat)}
                             className="h-7 text-xs"
                           >
@@ -327,7 +325,7 @@ function VelocityFixture({
         onClose={() => setEditingCell(null)}
       />
       <DeleteHeatModal heat={deletingHeat} onClose={() => setDeletingHeat(null)} />
-      <ResetHeatModal heat={resettingHeat} onClose={() => setResettingHeat(null)} />
+      <RestartHeatModal heat={restartingHeat} onClose={() => setRestartingHeat(null)} />
     </div>
   );
 }
@@ -366,8 +364,7 @@ function LaneCell({
     return (
       <button
         onClick={onAssign}
-        disabled={heat.status === "active"}
-        className="text-zinc-500 hover:text-yellow-400 text-xs italic disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="text-zinc-500 hover:text-yellow-400 text-xs italic transition-colors"
       >
         + Asignar
       </button>
@@ -377,7 +374,6 @@ function LaneCell({
   const run = ha.runs?.[0];
   const hasRecordedRun = run && run.status === "recorded";
   const timerLabel = ha.timer?.full_name ?? ha.timer?.email ?? null;
-  const disabled = heat.status === "active" || loading;
 
   return (
     <div className="space-y-1 min-w-0">
@@ -396,19 +392,19 @@ function LaneCell({
       <p className={`text-xs truncate ${timerLabel ? "text-blue-400" : "text-zinc-600 italic"}`}>
         {timerLabel ? `👤 ${timerLabel}` : "sin cronometrista"}
       </p>
-      <div className="flex gap-1 mt-1">
+      <div className="flex gap-1 mt-1 flex-wrap">
         <button
           onClick={onAssign}
-          disabled={disabled}
-          className="text-zinc-400 hover:text-yellow-400 text-xs disabled:opacity-30 disabled:cursor-not-allowed"
+          disabled={loading}
+          className="text-zinc-400 hover:text-yellow-400 text-xs disabled:opacity-30"
           title="Editar este carril"
         >
           ✏️ Editar
         </button>
         <button
           onClick={handleClear}
-          disabled={disabled}
-          className="text-zinc-400 hover:text-red-400 text-xs disabled:opacity-30 disabled:cursor-not-allowed"
+          disabled={loading}
+          className="text-zinc-400 hover:text-red-400 text-xs disabled:opacity-30"
           title="Liberar este carril"
         >
           🗑 Borrar
@@ -520,34 +516,53 @@ function AssignLaneModal({
   );
 }
 
-function ResetHeatModal({ heat, onClose }: { heat: Heat | null; onClose: () => void }) {
+function RestartHeatModal({ heat, onClose }: { heat: Heat | null; onClose: () => void }) {
   const [loading, setLoading] = useState(false);
 
-  async function handleReset() {
+  async function handleRestart() {
     if (!heat) return;
     setLoading(true);
-    const r = await resetHeatRuns(heat.id);
+    const r = await restartHeat(heat.id);
     if (r?.error) toast.error(r.error);
-    else { toast.success(`M${heat.heat_number}: tiempos invalidados`); onClose(); }
+    else { toast.success(`M${heat.heat_number} reiniciada — vuelve a Pendiente`); onClose(); }
     setLoading(false);
   }
 
-  const affected = heat?.heat_assignments
+  const recordedRuns = heat?.heat_assignments
     .filter((a) => a.runs?.some((r) => r.status === "recorded"))
     .map((a) => `${a.teams?.name ?? "—"} (${a.lane})`)
     .join(", ");
+
+  const wasActive = heat?.status === "active";
 
   return (
     <Dialog open={!!heat} onOpenChange={(o) => !o && !loading && onClose()}>
       <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md w-[calc(100vw-1.5rem)]">
         <DialogHeader>
-          <DialogTitle>¿Repetir manga M{heat?.heat_number}?</DialogTitle>
-          <DialogDescription className="text-zinc-400">
-            Los tiempos ya registrados quedarán marcados como inválidos (auditoría) y los
-            cronometristas podrán enviar nuevos tiempos. Después de confirmar, vuelve a
-            activar la manga.
-            {affected && (
-              <span className="block mt-2 text-zinc-300">Afecta: {affected}</span>
+          <DialogTitle>¿Reiniciar manga M{heat?.heat_number}?</DialogTitle>
+          <DialogDescription className="text-zinc-400 space-y-2">
+            <span className="block">
+              Esto hace dos cosas:
+            </span>
+            <span className="block">
+              1. <strong className="text-zinc-200">Invalida los tiempos registrados</strong>{" "}
+              (quedan en auditoría como &quot;failed&quot;)
+            </span>
+            <span className="block">
+              2. <strong className="text-zinc-200">Vuelve la manga a &quot;Pendiente&quot;</strong> —
+              tendrás que reactivarla manualmente cuando quieras que los cronometristas
+              registren de nuevo
+            </span>
+            {wasActive && (
+              <span className="block mt-2 text-yellow-400 font-medium">
+                ⚠️ La manga está EN CURSO. Reiniciarla detendrá a los cronometristas hasta
+                que vuelvas a activar.
+              </span>
+            )}
+            {recordedRuns && (
+              <span className="block mt-2 text-zinc-300">
+                Tiempos afectados: {recordedRuns}
+              </span>
             )}
           </DialogDescription>
         </DialogHeader>
@@ -555,8 +570,8 @@ function ResetHeatModal({ heat, onClose }: { heat: Heat | null; onClose: () => v
           <Button variant="outline" onClick={onClose} disabled={loading} className="border-zinc-600 text-zinc-300">
             Cancelar
           </Button>
-          <Button onClick={handleReset} disabled={loading} className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium">
-            {loading ? "Procesando..." : "Confirmar repetición"}
+          <Button onClick={handleRestart} disabled={loading} className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium">
+            {loading ? "Reiniciando..." : "Confirmar reinicio"}
           </Button>
         </div>
       </DialogContent>
@@ -611,6 +626,7 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
   const [loading, setLoading] = useState(false);
   const [editingHeat, setEditingHeat] = useState<Heat | null>(null);
   const [deletingHeat, setDeletingHeat] = useState<Heat | null>(null);
+  const [restartingHeat, setRestartingHeat] = useState<Heat | null>(null);
 
   const startHeatNum = heats.length > 0 ? Math.max(...heats.map((h) => h.heat_number)) + 1 : 1;
 
@@ -680,8 +696,9 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
                           {isActive && (
                             <Button size="sm" onClick={() => handleSetStatus(heat.id, "finished")} className="h-7 text-xs bg-blue-700 hover:bg-blue-600 text-white">Cerrar</Button>
                           )}
-                          <Button size="sm" variant="outline" disabled={isActive} onClick={() => setEditingHeat(heat)} className="h-7 text-xs border-zinc-600 text-zinc-300">Editar</Button>
-                          <Button size="sm" variant="destructive" disabled={isActive} onClick={() => setDeletingHeat(heat)} className="h-7 text-xs">Borrar</Button>
+                          <Button size="sm" variant="outline" onClick={() => setEditingHeat(heat)} className="h-7 text-xs border-zinc-600 text-zinc-300">Editar</Button>
+                          <Button size="sm" variant="outline" onClick={() => setRestartingHeat(heat)} className="h-7 text-xs border-yellow-700 text-yellow-400 hover:bg-yellow-900/30">🔄 Reiniciar</Button>
+                          <Button size="sm" variant="destructive" onClick={() => setDeletingHeat(heat)} className="h-7 text-xs">Borrar</Button>
                         </div>
                       </td>
                     </tr>
@@ -731,6 +748,7 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
 
       <EditVersatilityModal heat={editingHeat} teams={teams} onClose={() => setEditingHeat(null)} />
       <DeleteHeatModal heat={deletingHeat} onClose={() => setDeletingHeat(null)} />
+      <RestartHeatModal heat={restartingHeat} onClose={() => setRestartingHeat(null)} />
     </div>
   );
 }

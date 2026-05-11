@@ -128,19 +128,10 @@ export async function deleteFixture(testType: TestType) {
 }
 
 // Borra una sola manga (con sus heat_assignments y runs por cascade)
+// El admin puede borrar incluso mangas en curso (gestión de emergencias).
 export async function deleteHeat(heatId: string) {
   await requireAdmin();
   const supabase = await createClient();
-
-  const { data: heat } = await supabase
-    .from("heats")
-    .select("status")
-    .eq("id", heatId)
-    .single();
-
-  if (heat?.status === "active") {
-    return { error: "No se puede borrar una manga en curso. Ciérrala primero." };
-  }
 
   const { error } = await supabase.from("heats").delete().eq("id", heatId);
   if (error) return { error: error.message };
@@ -151,22 +142,13 @@ export async function deleteHeat(heatId: string) {
 }
 
 // Reemplaza completamente las asignaciones de una manga de velocidad
+// El admin puede editar incluso mangas en curso.
 export async function updateVelocityHeat(
   heatId: string,
   assignments: { team_id: string; lane: Lane }[]
 ) {
   await requireAdmin();
   const supabase = await createClient();
-
-  const { data: heat } = await supabase
-    .from("heats")
-    .select("status")
-    .eq("id", heatId)
-    .single();
-
-  if (heat?.status === "active") {
-    return { error: "No se puede editar una manga en curso. Ciérrala primero." };
-  }
 
   // Borra todas las asignaciones existentes y reinserta
   const { error: delErr } = await supabase
@@ -193,6 +175,7 @@ export async function updateVelocityHeat(
 
 // Asignar/reasignar equipo + cronometrista en un carril específico
 // Si ya existe asignación en (heat, lane) la reemplaza; si no, la crea.
+// El admin puede modificar incluso si la manga está en curso (gestión de emergencias).
 export async function assignLane(
   heatId: string,
   lane: Lane,
@@ -201,16 +184,6 @@ export async function assignLane(
 ) {
   await requireAdmin();
   const supabase = await createClient();
-
-  const { data: heat } = await supabase
-    .from("heats")
-    .select("status")
-    .eq("id", heatId)
-    .single();
-
-  if (heat?.status === "active") {
-    return { error: "No se puede modificar una manga en curso. Ciérrala primero." };
-  }
 
   // Si ya hay una asignación en este (heat, lane), bórrala primero
   const { data: existing } = await supabase
@@ -241,19 +214,10 @@ export async function assignLane(
 }
 
 // Liberar un carril: borra la asignación y su run (si lo hay)
+// El admin puede liberar incluso con manga activa.
 export async function clearLane(heatAssignmentId: string) {
   await requireAdmin();
   const supabase = await createClient();
-
-  const { data: ha } = await supabase
-    .from("heat_assignments")
-    .select("heat_id, heats(status)")
-    .eq("id", heatAssignmentId)
-    .single() as { data: { heat_id: string; heats: { status: string } | null } | null };
-
-  if (ha?.heats?.status === "active") {
-    return { error: "No se puede modificar una manga en curso. Ciérrala primero." };
-  }
 
   // Borrar run primero (cascade no aplica de heat_assignments a runs en delete normal)
   await supabase.from("runs").delete().eq("heat_assignment_id", heatAssignmentId);
@@ -303,8 +267,44 @@ export async function resetLaneRun(heatAssignmentId: string) {
   return { success: true };
 }
 
+// Reiniciar una manga: invalida todos los runs + vuelve la manga a 'pending'.
+// Disponible en cualquier estado. Útil para errores de carrera, repeticiones
+// completas o cuando hay que reorganizar carriles.
+export async function restartHeat(heatId: string) {
+  await requireAdmin();
+  const supabase = await createClient();
+
+  // 1) Marcar todos los runs como failed (auditoría)
+  const { data: assignments } = await supabase
+    .from("heat_assignments")
+    .select("id")
+    .eq("heat_id", heatId);
+
+  if (assignments && assignments.length > 0) {
+    const ids = assignments.map((a) => a.id);
+    const { error: failErr } = await supabase
+      .from("runs")
+      .update({ status: "failed" })
+      .in("heat_assignment_id", ids)
+      .neq("status", "failed");
+    if (failErr) return { error: failErr.message };
+  }
+
+  // 2) Volver la manga a 'pending' (admin debe reactivar conscientemente)
+  const { error: statusErr } = await supabase
+    .from("heats")
+    .update({ status: "pending" })
+    .eq("id", heatId);
+  if (statusErr) return { error: statusErr.message };
+
+  revalidatePath("/admin/fixtures");
+  revalidatePath("/admin/heats");
+  revalidatePath("/admin/runs");
+  return { success: true };
+}
+
 // Resetear los tiempos de los 3 carriles de una manga completa
-// (para cuando hay que repetir la manga entera)
+// (NO cambia el status de la manga)
 export async function resetHeatRuns(heatId: string) {
   await requireAdmin();
   const supabase = await createClient();
@@ -331,19 +331,10 @@ export async function resetHeatRuns(heatId: string) {
 }
 
 // Reemplaza el equipo de una manga de versatilidad
+// El admin puede editar incluso mangas en curso.
 export async function updateVersatilityHeat(heatId: string, teamId: string) {
   await requireAdmin();
   const supabase = await createClient();
-
-  const { data: heat } = await supabase
-    .from("heats")
-    .select("status")
-    .eq("id", heatId)
-    .single();
-
-  if (heat?.status === "active") {
-    return { error: "No se puede editar una manga en curso. Ciérrala primero." };
-  }
 
   const { error: delErr } = await supabase
     .from("heat_assignments")
