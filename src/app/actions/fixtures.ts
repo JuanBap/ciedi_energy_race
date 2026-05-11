@@ -330,11 +330,24 @@ export async function resetHeatRuns(heatId: string) {
   return { success: true };
 }
 
-// Reemplaza el equipo de una manga de versatilidad
+// Reemplaza el equipo y/o cronometrista de una manga de versatilidad
 // El admin puede editar incluso mangas en curso.
-export async function updateVersatilityHeat(heatId: string, teamId: string) {
+export async function updateVersatilityHeat(
+  heatId: string,
+  teamId: string,
+  timerUserId: string | null = null
+) {
   await requireAdmin();
   const supabase = await createClient();
+
+  // Borrar runs existentes para evitar dejarlos huérfanos
+  const { data: existingHas } = await supabase
+    .from("heat_assignments")
+    .select("id")
+    .eq("heat_id", heatId);
+  if (existingHas?.length) {
+    await supabase.from("runs").delete().in("heat_assignment_id", existingHas.map((a) => a.id));
+  }
 
   const { error: delErr } = await supabase
     .from("heat_assignments")
@@ -344,9 +357,27 @@ export async function updateVersatilityHeat(heatId: string, teamId: string) {
 
   const { error: insErr } = await supabase
     .from("heat_assignments")
-    .insert({ heat_id: heatId, team_id: teamId, lane: null });
+    .insert({ heat_id: heatId, team_id: teamId, lane: null, timer_user_id: timerUserId });
   if (insErr) return { error: insErr.message };
 
   revalidatePath("/admin/fixtures");
+  revalidatePath("/admin/heats");
+  return { success: true };
+}
+
+// Solo cambiar el cronometrista de una manga de versatilidad (sin tocar el equipo)
+export async function setVersatilityTimer(heatId: string, timerUserId: string | null) {
+  await requireAdmin();
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("heat_assignments")
+    .update({ timer_user_id: timerUserId })
+    .eq("heat_id", heatId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath("/admin/fixtures");
+  revalidatePath("/admin/heats");
   return { success: true };
 }

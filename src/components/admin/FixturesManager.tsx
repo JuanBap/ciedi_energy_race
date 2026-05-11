@@ -108,7 +108,7 @@ export default function FixturesManager({ teams, timers, velocityHeats, versatil
           <VelocityFixture teams={teams} timers={timers} heats={velocityHeats} />
         </TabsContent>
         <TabsContent value="versatility" className="mt-4">
-          <VersatilityFixture teams={teams} heats={versatilityHeats} />
+          <VersatilityFixture teams={teams} timers={timers} heats={versatilityHeats} />
         </TabsContent>
       </Tabs>
     </div>
@@ -621,7 +621,9 @@ function DeleteHeatModal({ heat, onClose }: { heat: Heat | null; onClose: () => 
 
 // ── Versatility (sin carriles ni timer; un equipo por manga) ─────────────────
 
-function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) {
+function VersatilityFixture({
+  teams, timers, heats,
+}: { teams: Team[]; timers: TimerUser[]; heats: Heat[] }) {
   const [rows, setRows] = useState<string[]>([""]);
   const [loading, setLoading] = useState(false);
   const [editingHeat, setEditingHeat] = useState<Heat | null>(null);
@@ -662,13 +664,16 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
                 <tr className="border-b border-zinc-700 bg-zinc-800/60">
                   <th className="py-2 px-3 text-left text-zinc-400 font-medium w-16">Manga</th>
                   <th className="py-2 px-3 text-left text-zinc-400 font-medium">Equipo</th>
+                  <th className="py-2 px-3 text-left text-zinc-400 font-medium">Cronometrista</th>
                   <th className="py-2 px-3 text-left text-zinc-400 font-medium w-28">Estado</th>
-                  <th className="py-2 px-3 text-right text-zinc-400 font-medium w-44">Acciones</th>
+                  <th className="py-2 px-3 text-right text-zinc-400 font-medium w-52">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {heats.map((heat) => {
-                  const team = heat.heat_assignments[0]?.teams;
+                  const ha = heat.heat_assignments[0];
+                  const team = ha?.teams;
+                  const timerLabel = ha?.timer?.full_name ?? ha?.timer?.email ?? null;
                   const s = STATUS_LABEL[heat.status] ?? STATUS_LABEL.pending;
                   const isActive = heat.status === "active";
                   return (
@@ -684,6 +689,13 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
                             </div>
                           </div>
                         ) : <span className="text-zinc-600">Sin equipo</span>}
+                      </td>
+                      <td className="py-2 px-3">
+                        {timerLabel ? (
+                          <span className="text-blue-400 text-sm">👤 {timerLabel}</span>
+                        ) : (
+                          <span className="text-zinc-600 text-xs italic">Sin cronometrista</span>
+                        )}
                       </td>
                       <td className="py-2 px-3">
                         <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${s.color}`}>{s.label}</span>
@@ -746,26 +758,36 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
         </div>
       </div>
 
-      <EditVersatilityModal heat={editingHeat} teams={teams} onClose={() => setEditingHeat(null)} />
+      <EditVersatilityModal heat={editingHeat} teams={teams} timers={timers} onClose={() => setEditingHeat(null)} />
       <DeleteHeatModal heat={deletingHeat} onClose={() => setDeletingHeat(null)} />
       <RestartHeatModal heat={restartingHeat} onClose={() => setRestartingHeat(null)} />
     </div>
   );
 }
 
-function EditVersatilityModal({ heat, teams, onClose }: { heat: Heat | null; teams: Team[]; onClose: () => void }) {
+function EditVersatilityModal({
+  heat, teams, timers, onClose,
+}: {
+  heat: Heat | null;
+  teams: Team[];
+  timers: TimerUser[];
+  onClose: () => void;
+}) {
   const [teamId, setTeamId] = useState("");
+  const [timerId, setTimerId] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!heat) return;
-    setTeamId(heat.heat_assignments[0]?.team_id ?? "");
+    const ha = heat.heat_assignments[0];
+    setTeamId(ha?.team_id ?? "");
+    setTimerId(ha?.timer_user_id ?? "");
   }, [heat]);
 
   async function handleSave() {
     if (!heat || !teamId || teamId === "none") { toast.error("Selecciona un equipo"); return; }
     setLoading(true);
-    const r = await updateVersatilityHeat(heat.id, teamId);
+    const r = await updateVersatilityHeat(heat.id, teamId, timerId || null);
     if (r?.error) toast.error(r.error);
     else { toast.success(`M${heat.heat_number} actualizada`); onClose(); }
     setLoading(false);
@@ -776,19 +798,49 @@ function EditVersatilityModal({ heat, teams, onClose }: { heat: Heat | null; tea
       <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md w-[calc(100vw-1.5rem)]">
         <DialogHeader>
           <DialogTitle>Editar M{heat?.heat_number} — Versatilidad</DialogTitle>
+          <DialogDescription className="text-zinc-400">
+            Define qué equipo corre esta manga y qué cronometrista toma el tiempo.
+          </DialogDescription>
         </DialogHeader>
-        <Select value={teamId || ""} onValueChange={setTeamId}>
-          <SelectTrigger className="bg-zinc-800 border-zinc-600 text-white w-full">
-            <SelectValue placeholder="Seleccionar equipo" />
-          </SelectTrigger>
-          <SelectContent className="bg-zinc-800 border-zinc-700">
-            {teams.map((t) => (
-              <SelectItem key={t.id} value={t.id} className="text-white">
-                <span>{t.name} <span className="text-zinc-400">— {t.school}</span></span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="space-y-4 py-2">
+          <div className="space-y-2">
+            <label className="text-zinc-300 text-sm">Equipo</label>
+            <Select value={teamId || ""} onValueChange={setTeamId}>
+              <SelectTrigger className="bg-zinc-800 border-zinc-600 text-white w-full">
+                <SelectValue placeholder="Seleccionar equipo" />
+              </SelectTrigger>
+              <SelectContent className="bg-zinc-800 border-zinc-700">
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={t.id} className="text-white">
+                    <span>{t.name} <span className="text-zinc-400">— {t.school}</span></span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-zinc-300 text-sm">Cronometrista</label>
+            <Select value={timerId || "none"} onValueChange={(v) => setTimerId(v === "none" ? "" : v)}>
+              <SelectTrigger className="bg-zinc-800 border-zinc-600 text-white w-full">
+                <SelectValue placeholder="Sin cronometrista" />
+              </SelectTrigger>
+              <SelectContent className="bg-zinc-800 border-zinc-700">
+                <SelectItem value="none" className="text-zinc-400 italic">Sin cronometrista</SelectItem>
+                {timers.map((u) => (
+                  <SelectItem key={u.id} value={u.id} className="text-white">
+                    <span>
+                      {u.full_name ?? u.email}
+                      {u.role === "admin" && <span className="ml-1 text-xs text-zinc-400">(admin)</span>}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-zinc-500">
+              El cronometrista verá esta manga cuando la actives.
+            </p>
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-3 pt-2">
           <Button variant="outline" onClick={onClose} disabled={loading} className="border-zinc-600 text-zinc-300">Cancelar</Button>
           <Button onClick={handleSave} disabled={loading} className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium">{loading ? "Guardando..." : "Guardar"}</Button>
