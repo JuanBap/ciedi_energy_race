@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -84,33 +82,10 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
 const LANES: Lane[] = ["C2", "C4", "C6"];
 
 export default function FixturesManager({ teams, timers, velocityHeats, versatilityHeats }: Props) {
-  const router = useRouter();
-  const [connected, setConnected] = useState(false);
-
-  // Realtime: refrescar la página entera (server-rendered) cuando cambien
-  // heats, heat_assignments o runs. Así la tabla siempre muestra el estado
-  // real sin esperar a recargas manuales.
-  useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel("fixtures-sync")
-      .on("postgres_changes", { event: "*", schema: "public", table: "heats" }, () => router.refresh())
-      .on("postgres_changes", { event: "*", schema: "public", table: "heat_assignments" }, () => router.refresh())
-      .on("postgres_changes", { event: "*", schema: "public", table: "runs" }, () => router.refresh())
-      .subscribe((s) => setConnected(s === "SUBSCRIBED"));
-    return () => { supabase.removeChannel(channel); };
-  }, [router]);
-
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-4 text-sm text-zinc-400">
-        <div className="flex items-center justify-between mb-1">
-          <p className="font-medium text-zinc-300">Cómo funciona</p>
-          <div className="flex items-center gap-1 text-xs text-zinc-500">
-            <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400" : "bg-zinc-600"}`} />
-            <span>{connected ? "Sincronizado" : "Conectando…"}</span>
-          </div>
-        </div>
+        <p className="font-medium text-zinc-300 mb-1">Cómo funciona</p>
         <ul className="list-disc list-inside space-y-0.5">
           <li><span className="text-white">Velocidad</span> — hasta 3 equipos en paralelo (uno por carril). Los carriles pueden quedar vacíos.</li>
           <li><span className="text-white">Versatilidad</span> — un equipo por manga, en orden de salida.</li>
