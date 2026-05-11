@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,7 @@ interface Heat {
   heat_number: number;
   test_type: string;
   status: string;
+  started_at: string | null;
   heat_assignments: HeatAssignment[];
 }
 
@@ -50,6 +51,8 @@ interface Props {
   eventId: string;
 }
 
+const LANE_ORDER: Record<string, number> = { C2: 0, C4: 1, C6: 2 };
+
 export default function LiveScoreboard({
   event,
   initialRankings,
@@ -60,79 +63,90 @@ export default function LiveScoreboard({
   const [activeHeats, setActiveHeats] = useState<Heat[]>(initialActiveHeats);
   const [connected, setConnected] = useState(false);
 
-  const supabase = createClient();
-
   useEffect(() => {
-    // Subscribe to runs changes for real-time updates
+    const supabase = createClient();
+
+    async function refetchActiveHeats() {
+      const { data } = await supabase
+        .from("heats")
+        .select(`
+          *,
+          heat_assignments(
+            *,
+            teams(id, name, school, color_hex, shield_url),
+            runs(id, time_ms, has_penalty_velocity, status)
+          )
+        `)
+        .eq("event_id", eventId)
+        .eq("status", "active");
+      if (data) setActiveHeats(data);
+    }
+
+    async function refetchRankings() {
+      const { data } = await supabase
+        .from("v_rankings")
+        .select("*")
+        .eq("event_id", eventId)
+        .order("category_slug")
+        .order("final_position", { ascending: true, nullsFirst: false });
+      if (data) setRankings(data);
+    }
+
     const channel = supabase
-      .channel("live-runs")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "runs" },
-        async () => {
-          // Refetch rankings
-          const { data: newRankings } = await supabase
-            .from("v_rankings")
-            .select("*")
-            .eq("event_id", eventId)
-            .order("category_slug")
-            .order("final_position", { ascending: true, nullsFirst: false });
+      .channel("live-board")
+      .on("postgres_changes", { event: "*", schema: "public", table: "runs" }, () => {
+        refetchRankings();
+        refetchActiveHeats();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "heats" }, refetchActiveHeats)
+      .on("postgres_changes", { event: "*", schema: "public", table: "heat_assignments" }, refetchActiveHeats)
+      .subscribe((status) => setConnected(status === "SUBSCRIBED"));
 
-          if (newRankings) setRankings(newRankings);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "heats" },
-        async () => {
-          const { data: newHeats } = await supabase
-            .from("heats")
-            .select(`
-              *,
-              heat_assignments(
-                *,
-                teams(id, name, school, color_hex, shield_url),
-                runs(id, time_ms, has_penalty_velocity, status)
-              )
-            `)
-            .eq("event_id", eventId)
-            .eq("status", "active");
-
-          if (newHeats) setActiveHeats(newHeats);
-        }
-      )
-      .subscribe((status) => {
-        setConnected(status === "SUBSCRIBED");
-      });
+    // Polling de respaldo cada 4s para mantener cifras actualizadas
+    const interval = setInterval(() => {
+      refetchRankings();
+      refetchActiveHeats();
+    }, 4000);
 
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(interval);
     };
-  }, [eventId, supabase]);
+  }, [eventId]);
 
   const isFinished = event?.status === "finished";
   const pushcartsRankings = rankings.filter((r) => r.category_slug === "pushcarts");
   const hpvsRankings = rankings.filter((r) => r.category_slug === "hpvs");
 
+  // Ordenar mangas activas por número, y carriles por orden estable
+  const sortedActive = [...activeHeats]
+    .sort((a, b) => a.heat_number - b.heat_number)
+    .map((h) => ({
+      ...h,
+      heat_assignments: [...h.heat_assignments].sort((a, b) => {
+        const oa = LANE_ORDER[a.lane ?? ""] ?? 99;
+        const ob = LANE_ORDER[b.lane ?? ""] ?? 99;
+        return oa - ob;
+      }),
+    }));
+
   return (
     <main className="min-h-screen bg-black text-white">
-      {/* Header */}
-      <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex items-center justify-between">
+      <header className="bg-zinc-900 border-b border-zinc-800 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between sticky top-0 z-10">
         <div>
-          <p className="text-yellow-400 text-xs font-medium tracking-widest uppercase">
+          <p className="text-yellow-400 text-[10px] sm:text-xs font-medium tracking-widest uppercase">
             CIEDI — E5 Challenge
           </p>
-          <h1 className="text-2xl font-bold">{event?.name ?? "Energy Race 2026"}</h1>
+          <h1 className="text-xl sm:text-2xl font-bold">{event?.name ?? "Energy Race 2026"}</h1>
         </div>
-        <div className="flex items-center gap-3">
-          <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400" : "bg-zinc-600"}`} />
-          <span className="text-zinc-500 text-xs">
-            {connected ? "En vivo" : "Conectando..."}
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400 animate-pulse" : "bg-zinc-600"}`} />
+          <span className="text-zinc-400 text-xs sm:text-sm">
+            {connected ? "EN VIVO" : "Conectando..."}
           </span>
         </div>
       </header>
 
-      {/* Podium (when finished) */}
       {isFinished && (
         <PodiumDisplay
           pushcarts={pushcartsRankings.slice(0, 3)}
@@ -140,40 +154,33 @@ export default function LiveScoreboard({
         />
       )}
 
-      {/* Active heats */}
-      {!isFinished && activeHeats.length > 0 && (
-        <section className="px-6 py-6 border-b border-zinc-800">
-          <h2 className="text-zinc-400 text-sm uppercase tracking-wider mb-4">
-            En pista ahora
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {activeHeats.flatMap((heat) =>
-              heat.heat_assignments.map((ha) => (
-                <ActiveHeatCard key={ha.id} ha={ha} heat={heat} />
-              ))
-            )}
-          </div>
+      {/* F1-style leaderboard de mangas activas */}
+      {!isFinished && sortedActive.length > 0 && (
+        <section className="px-4 sm:px-6 py-6 border-b border-zinc-800 bg-gradient-to-b from-zinc-900/50 to-black">
+          {sortedActive.map((heat) => (
+            <LiveHeatBoard key={heat.id} heat={heat} />
+          ))}
         </section>
       )}
 
-      {/* Rankings table */}
-      <section className="px-6 py-6">
+      {!isFinished && sortedActive.length === 0 && (
+        <section className="px-6 py-12 border-b border-zinc-800 text-center">
+          <p className="text-zinc-500 text-sm uppercase tracking-widest">
+            Esperando próxima manga
+          </p>
+        </section>
+      )}
+
+      <section className="px-4 sm:px-6 py-6">
         <Tabs defaultValue="pushcarts">
           <TabsList className="bg-zinc-900 border border-zinc-800 mb-6">
-            <TabsTrigger
-              value="pushcarts"
-              className="data-[state=active]:bg-yellow-400 data-[state=active]:text-black"
-            >
+            <TabsTrigger value="pushcarts" className="data-[state=active]:bg-yellow-400 data-[state=active]:text-black">
               Pushcarts
             </TabsTrigger>
-            <TabsTrigger
-              value="hpvs"
-              className="data-[state=active]:bg-yellow-400 data-[state=active]:text-black"
-            >
+            <TabsTrigger value="hpvs" className="data-[state=active]:bg-yellow-400 data-[state=active]:text-black">
               HPV&apos;s
             </TabsTrigger>
           </TabsList>
-
           <TabsContent value="pushcarts">
             <RankingsTable rankings={pushcartsRankings} />
           </TabsContent>
@@ -186,61 +193,201 @@ export default function LiveScoreboard({
   );
 }
 
-function ActiveHeatCard({ ha, heat }: { ha: HeatAssignment; heat: Heat }) {
-  const run = ha.runs?.[0];
-  const isRecorded = run?.status === "recorded";
+// ─────────────────────────────────────────────────────────────────────────────
+// Cronómetro vivo: contador desde started_at (referencia común para la manga)
+// ─────────────────────────────────────────────────────────────────────────────
+function LiveClock({ startedAt }: { startedAt: string | null }) {
+  const [ms, setMs] = useState(0);
+  const rafRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!startedAt) {
+      setMs(0);
+      return;
+    }
+    const start = new Date(startedAt).getTime();
+    const tick = () => {
+      setMs(Date.now() - start);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [startedAt]);
+
+  if (!startedAt) return <>00:00</>;
+  return <>{formatTime(ms)}</>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Leaderboard de una manga activa (estilo F1)
+// ─────────────────────────────────────────────────────────────────────────────
+function LiveHeatBoard({ heat }: { heat: Heat }) {
+  // Calcular posiciones de los equipos que YA terminaron en esta manga
+  const finishedRuns = heat.heat_assignments
+    .map((ha) => {
+      const run = ha.runs?.[0];
+      const totalMs = run?.status === "recorded" && run.time_ms != null
+        ? run.time_ms + (run.has_penalty_velocity ? 10000 : 0)
+        : null;
+      return { haId: ha.id, totalMs };
+    })
+    .filter((r) => r.totalMs !== null)
+    .sort((a, b) => (a.totalMs ?? 0) - (b.totalMs ?? 0));
+
+  const positionMap = new Map<string, number>();
+  finishedRuns.forEach((r, i) => positionMap.set(r.haId, i + 1));
+
+  const allFinished = heat.heat_assignments.length > 0 &&
+    heat.heat_assignments.every((ha) => ha.runs?.[0]?.status === "recorded");
 
   return (
-    <div
-      className="rounded-2xl p-5 flex flex-col gap-3 border-2"
-      style={{
-        backgroundColor: ha.teams?.color_hex
-          ? `${ha.teams.color_hex}22`
-          : "#18181b",
-        borderColor: ha.teams?.color_hex ?? "#3f3f46",
-      }}
-    >
-      <div className="flex items-center justify-between">
-        <Badge variant="outline" className="border-zinc-600 text-zinc-400 text-xs">
-          {heat.test_type === "velocity" ? "Velocidad" : "Versatilidad"}
-          {" "}M{heat.heat_number}
-          {ha.lane && ` · ${ha.lane}`}
-        </Badge>
-        {run?.has_penalty_velocity && (
-          <Badge className="bg-red-700 text-white text-xs">+10s</Badge>
-        )}
+    <div className="mb-6 last:mb-0">
+      {/* Banner de manga */}
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <p className="text-yellow-400 text-xs sm:text-sm font-bold tracking-widest uppercase">
+            {heat.test_type === "velocity" ? "VELOCIDAD" : "VERSATILIDAD"} · MANGA {heat.heat_number}
+          </p>
+          <div className="flex items-center gap-3 mt-1">
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-red-400 text-xs font-bold tracking-wider">LIVE</span>
+            </div>
+            {!allFinished && (
+              <span className="font-mono text-xl sm:text-2xl font-bold tabular-nums text-white">
+                <LiveClock startedAt={heat.started_at} />
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
-      {ha.teams && (
-        <>
-          {ha.teams.shield_url && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={ha.teams.shield_url}
-              alt={ha.teams.name}
-              className="w-12 h-12 object-contain"
-            />
-          )}
-          <div>
-            <p className="text-2xl font-bold leading-tight">{ha.teams.name}</p>
-            <p className="text-zinc-400 text-sm">{ha.teams.school}</p>
-          </div>
-        </>
-      )}
-
-      <div className="font-mono text-4xl font-bold">
-        {isRecorded && run.time_ms != null ? (
-          <span className="text-green-400">
-            {formatTime(run.time_ms + (run.has_penalty_velocity ? 10000 : 0))}
-          </span>
-        ) : (
-          <span className="text-zinc-600 animate-pulse">▶ EN CURSO</span>
-        )}
+      {/* Tarjetas por carril (F1 style) */}
+      <div className={`grid gap-3 sm:gap-4 ${
+        heat.heat_assignments.length === 1 ? "grid-cols-1 max-w-md mx-auto" :
+        heat.heat_assignments.length === 2 ? "grid-cols-1 md:grid-cols-2" :
+        "grid-cols-1 md:grid-cols-3"
+      }`}>
+        {heat.heat_assignments.map((ha) => (
+          <LaneCard
+            key={ha.id}
+            ha={ha}
+            heatStartedAt={heat.started_at}
+            position={positionMap.get(ha.id)}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
+function LaneCard({
+  ha,
+  heatStartedAt,
+  position,
+}: {
+  ha: HeatAssignment;
+  heatStartedAt: string | null;
+  position: number | undefined;
+}) {
+  const run = ha.runs?.[0];
+  const isRecorded = run?.status === "recorded";
+  const totalMs = isRecorded && run.time_ms != null
+    ? run.time_ms + (run.has_penalty_velocity ? 10000 : 0)
+    : null;
+
+  const teamColor = ha.teams?.color_hex ?? "#3f3f46";
+
+  return (
+    <div
+      className="relative rounded-2xl overflow-hidden border-2 transition-all duration-300"
+      style={{
+        borderColor: teamColor,
+        background: `linear-gradient(135deg, ${teamColor}33 0%, ${teamColor}0a 60%, #09090b 100%)`,
+      }}
+    >
+      {/* Posición (esquina superior izquierda) */}
+      {position && (
+        <div
+          className={`absolute top-0 left-0 w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center font-black text-2xl sm:text-3xl ${
+            position === 1 ? "text-black bg-yellow-400" :
+            position === 2 ? "text-black bg-zinc-300" :
+            position === 3 ? "text-white bg-amber-700" :
+            "text-zinc-300 bg-zinc-700"
+          }`}
+          style={{ clipPath: "polygon(0 0, 100% 0, 80% 100%, 0% 100%)" }}
+        >
+          <span className="pr-2">{position}</span>
+        </div>
+      )}
+
+      {/* Carril (esquina superior derecha) */}
+      {ha.lane && (
+        <div className="absolute top-3 right-3">
+          <Badge
+            className="bg-black/60 backdrop-blur text-white border border-white/20 text-xs font-mono"
+          >
+            {ha.lane}
+          </Badge>
+        </div>
+      )}
+
+      <div className="p-4 sm:p-5 pt-12 sm:pt-14 flex flex-col gap-3 min-h-[180px] sm:min-h-[200px]">
+        {/* Escudo o letra */}
+        <div className="flex items-center gap-3">
+          {ha.teams?.shield_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={ha.teams.shield_url}
+              alt={ha.teams.name}
+              className="w-12 h-12 sm:w-14 sm:h-14 object-contain rounded-lg bg-black/30 p-1"
+            />
+          ) : (
+            <div
+              className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg flex items-center justify-center font-black text-2xl"
+              style={{ backgroundColor: teamColor, color: "#000" }}
+            >
+              {ha.teams?.name.charAt(0).toUpperCase() ?? "—"}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="text-white text-lg sm:text-xl font-bold leading-tight truncate">
+              {ha.teams?.name ?? "Sin equipo"}
+            </p>
+            <p className="text-zinc-400 text-xs sm:text-sm truncate">
+              {ha.teams?.school}
+            </p>
+          </div>
+        </div>
+
+        {/* Tiempo grande */}
+        <div className="mt-auto">
+          {totalMs !== null ? (
+            <div className="flex items-end gap-2">
+              <span className="font-mono text-3xl sm:text-4xl font-black tabular-nums text-yellow-400 leading-none">
+                {formatTime(totalMs)}
+              </span>
+              {run?.has_penalty_velocity && (
+                <Badge className="bg-red-600 text-white text-xs font-bold mb-1">+10s</Badge>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-end gap-2">
+              <span className="font-mono text-3xl sm:text-4xl font-black tabular-nums text-green-400 leading-none">
+                <LiveClock startedAt={heatStartedAt} />
+              </span>
+              <span className="text-zinc-500 text-xs uppercase tracking-wider mb-1 animate-pulse">en pista</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tabla general (igual que antes, con pequeñas mejoras)
+// ─────────────────────────────────────────────────────────────────────────────
 function RankingsTable({ rankings }: { rankings: RankingRow[] }) {
   if (rankings.length === 0) {
     return (
@@ -277,13 +424,10 @@ function RankingsTable({ rankings }: { rankings: RankingRow[] }) {
                 <td className="py-3 pr-4">
                   <span
                     className={`font-bold text-lg ${
-                      pos === 1
-                        ? "text-yellow-400"
-                        : pos === 2
-                        ? "text-zinc-300"
-                        : pos === 3
-                        ? "text-amber-600"
-                        : "text-zinc-600"
+                      pos === 1 ? "text-yellow-400" :
+                      pos === 2 ? "text-zinc-300" :
+                      pos === 3 ? "text-amber-600" :
+                      "text-zinc-600"
                     }`}
                   >
                     {pos}°
@@ -291,31 +435,20 @@ function RankingsTable({ rankings }: { rankings: RankingRow[] }) {
                 </td>
                 <td className="py-3 pr-4">
                   <div className="flex items-center gap-3">
-                    <div
-                      className="w-4 h-4 rounded-full shrink-0"
-                      style={{ backgroundColor: row.color_hex }}
-                    />
+                    <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: row.color_hex }} />
                     <div>
                       <p className="font-medium text-white">{row.team_name}</p>
                       <p className="text-zinc-500 text-xs">{row.school}</p>
                     </div>
                   </div>
                 </td>
-                <td className="text-right py-3 px-2 text-zinc-400 hidden sm:table-cell">
-                  {row.points_design_brief}
-                </td>
-                <td className="text-right py-3 px-2 text-zinc-400 hidden sm:table-cell">
-                  {row.points_pitch}
+                <td className="text-right py-3 px-2 text-zinc-400 hidden sm:table-cell">{row.points_design_brief}</td>
+                <td className="text-right py-3 px-2 text-zinc-400 hidden sm:table-cell">{row.points_pitch}</td>
+                <td className="text-right py-3 px-2">
+                  <span className={row.points_velocity > 0 ? "text-blue-400" : "text-zinc-600"}>{row.points_velocity}</span>
                 </td>
                 <td className="text-right py-3 px-2">
-                  <span className={row.points_velocity > 0 ? "text-blue-400" : "text-zinc-600"}>
-                    {row.points_velocity}
-                  </span>
-                </td>
-                <td className="text-right py-3 px-2">
-                  <span className={row.points_versatility > 0 ? "text-green-400" : "text-zinc-600"}>
-                    {row.points_versatility}
-                  </span>
+                  <span className={row.points_versatility > 0 ? "text-green-400" : "text-zinc-600"}>{row.points_versatility}</span>
                 </td>
                 <td className="text-right py-3 pl-4">
                   <span className="font-bold text-xl text-white">{row.total_score}</span>
@@ -330,13 +463,7 @@ function RankingsTable({ rankings }: { rankings: RankingRow[] }) {
   );
 }
 
-function PodiumDisplay({
-  pushcarts,
-  hpvs,
-}: {
-  pushcarts: RankingRow[];
-  hpvs: RankingRow[];
-}) {
+function PodiumDisplay({ pushcarts, hpvs }: { pushcarts: RankingRow[]; hpvs: RankingRow[] }) {
   return (
     <section className="px-6 py-8 bg-zinc-950 border-b border-zinc-800">
       <h2 className="text-center text-yellow-400 text-xs font-medium tracking-widest uppercase mb-6">
@@ -352,7 +479,6 @@ function PodiumDisplay({
 
 function PodiumCategory({ title, teams }: { title: string; teams: RankingRow[] }) {
   const medals = ["🥇", "🥈", "🥉"];
-
   return (
     <div className="space-y-3">
       <h3 className="text-white font-bold text-center text-lg">{title}</h3>

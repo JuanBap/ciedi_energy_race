@@ -83,6 +83,7 @@ create table heats (
   test_type   test_type   not null,
   heat_number int         not null,
   status      heat_status not null default 'pending',
+  started_at  timestamptz,
   created_at  timestamptz not null default now(),
   unique(event_id, test_type, heat_number)
 );

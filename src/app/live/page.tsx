@@ -20,7 +20,7 @@ export default async function LivePage() {
       supabase
         .from("heats")
         .select(`
-          *,
+          id, heat_number, test_type, status, started_at,
           heat_assignments(
             *,
             teams(id, name, school, color_hex, shield_url),

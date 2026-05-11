@@ -11,9 +11,20 @@ export async function setHeatStatus(
   await requireAdmin();
   const supabase = await createClient();
 
+  // Registrar started_at cuando se activa por primera vez (sirve para
+  // el cronómetro en vivo de /live). Si se reactiva tras un reset,
+  // sobreescribimos el started_at con la hora actual.
+  const update: { status: typeof status; started_at?: string | null } = { status };
+  if (status === "active") {
+    update.started_at = new Date().toISOString();
+  } else if (status === "pending") {
+    // Si vuelve a pending (reset/reinicio), limpiar el timestamp
+    update.started_at = null;
+  }
+
   const { error } = await supabase
     .from("heats")
-    .update({ status })
+    .update(update)
     .eq("id", heatId);
 
   if (error) return { error: error.message };
