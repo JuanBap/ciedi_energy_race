@@ -48,6 +48,8 @@ export default async function ScoresPage() {
       initialRuns={runs ?? []}
       initialHeats={heats ?? []}
       eventId={EVENT_ID}
+      initialPublished={event?.results_published ?? false}
+      initialPodiumStep={event?.podium_reveal_step ?? 0}
     />
   );
 }

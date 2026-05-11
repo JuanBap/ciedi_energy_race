@@ -22,6 +22,8 @@ interface Event {
   id: string;
   name: string;
   status: string;
+  results_published?: boolean;
+  podium_reveal_step?: number;
 }
 
 interface Props {
@@ -30,6 +32,8 @@ interface Props {
   initialRuns: RunRow[];
   initialHeats: HeatRow[];
   eventId: string;
+  initialPublished: boolean;
+  initialPodiumStep: number;
 }
 
 type CategoryFilter = "pushcarts" | "hpvs";
@@ -40,15 +44,20 @@ const POSITION_POINTS: Record<number, number> = {
 };
 
 export default function ScoresView({
-  event,
+  event: initialEvent,
   initialRankings,
   initialRuns,
   initialHeats,
   eventId,
+  initialPublished,
+  initialPodiumStep,
 }: Props) {
   const [rankings, setRankings] = useState<RankingRow[]>(initialRankings);
   const [runs, setRuns] = useState<RunRow[]>(initialRuns);
   const [heats, setHeats] = useState<HeatRow[]>(initialHeats);
+  const [event, setEvent] = useState<Event | null>(initialEvent);
+  const [published, setPublished] = useState(initialPublished);
+  const [podiumStep, setPodiumStep] = useState(initialPodiumStep);
   const [connected, setConnected] = useState(false);
   const [tab, setTab] = useState<CategoryFilter>("pushcarts");
 
@@ -56,7 +65,7 @@ export default function ScoresView({
     const supabase = createClient();
 
     async function refetchAll() {
-      const [r, ru, h] = await Promise.all([
+      const [r, ru, h, e] = await Promise.all([
         supabase
           .from("v_rankings")
           .select("*")
@@ -72,10 +81,16 @@ export default function ScoresView({
           .from("heats")
           .select("test_type, heat_number")
           .eq("event_id", eventId),
+        supabase.from("events").select("*").eq("id", eventId).single(),
       ]);
       if (r.data) setRankings(r.data);
       if (ru.data) setRuns(ru.data as unknown as RunRow[]);
       if (h.data) setHeats(h.data);
+      if (e.data) {
+        setEvent(e.data);
+        setPublished(e.data.results_published ?? false);
+        setPodiumStep(e.data.podium_reveal_step ?? 0);
+      }
     }
 
     const channel = supabase
@@ -84,9 +99,10 @@ export default function ScoresView({
       .on("postgres_changes", { event: "*", schema: "public", table: "scores" }, refetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "heats" }, refetchAll)
       .on("postgres_changes", { event: "*", schema: "public", table: "heat_assignments" }, refetchAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "events" }, refetchAll)
       .subscribe((status) => setConnected(status === "SUBSCRIBED"));
 
-    const interval = setInterval(refetchAll, 4000);
+    const interval = setInterval(refetchAll, 3000);
 
     return () => {
       supabase.removeChannel(channel);
@@ -176,40 +192,225 @@ export default function ScoresView({
         </div>
       </header>
 
-      <section className="px-4 sm:px-6 py-4 border-b border-zinc-800 bg-zinc-950 sticky top-[64px] sm:top-[72px] z-[9] backdrop-blur">
-        <div className="flex gap-2">
-          <CategoryChip active={tab === "pushcarts"} onClick={() => setTab("pushcarts")}>Pushcarts</CategoryChip>
-          <CategoryChip active={tab === "hpvs"} onClick={() => setTab("hpvs")}>HPV&apos;s</CategoryChip>
-        </div>
-      </section>
+      {/* Mensaje de suspense cuando los resultados no están publicados */}
+      {!published ? (
+        <SuspenseScreen />
+      ) : (
+        <>
+          <section className="px-4 sm:px-6 py-4 border-b border-zinc-800 bg-zinc-950 sticky top-[64px] sm:top-[72px] z-[9] backdrop-blur">
+            <div className="flex gap-2">
+              <CategoryChip active={tab === "pushcarts"} onClick={() => setTab("pushcarts")}>Pushcarts</CategoryChip>
+              <CategoryChip active={tab === "hpvs"} onClick={() => setTab("hpvs")}>HPV&apos;s</CategoryChip>
+            </div>
+          </section>
 
-      {/* Top 3 visual */}
-      <section className="px-4 sm:px-6 py-6">
-        <Top3Cards rankings={tabRankings.slice(0, 3)} />
-      </section>
+          {/* Podio con flip cards reveladas progresivamente */}
+          <section className="px-4 sm:px-6 py-8">
+            <FlipPodium rankings={tabRankings.slice(0, 3)} revealStep={podiumStep} />
+          </section>
 
-      {/* Tabla detallada */}
-      <section className="px-4 sm:px-6 pb-8">
-        <ScoresTable
-          rankings={tabRankings}
-          totalVel={totalHeats.velocity}
-          totalVer={totalHeats.versatility}
-          runsByTeam={runsByTeam}
-        />
-        <Legend />
-      </section>
+          {/* Tabla detallada solo visible cuando el podio entero está revelado */}
+          {podiumStep >= 3 && (
+            <section className="px-4 sm:px-6 pb-8 animate-in fade-in duration-700">
+              <ScoresTable
+                rankings={tabRankings}
+                totalVel={totalHeats.velocity}
+                totalVer={totalHeats.versatility}
+                runsByTeam={runsByTeam}
+              />
+              <Legend />
+            </section>
+          )}
 
-      {isFinished && (
-        <section className="px-4 sm:px-6 pb-8">
-          <div className="rounded-xl border border-yellow-700/50 bg-yellow-900/10 p-4 text-center">
-            <p className="text-yellow-400 text-xs tracking-widest uppercase font-bold">Competencia Finalizada</p>
-            <p className="text-zinc-300 text-sm mt-1">
-              Estos son los puntajes finales oficiales.
-            </p>
-          </div>
-        </section>
+          {isFinished && podiumStep >= 3 && (
+            <section className="px-4 sm:px-6 pb-8">
+              <div className="rounded-xl border border-yellow-700/50 bg-yellow-900/10 p-4 text-center">
+                <p className="text-yellow-400 text-xs tracking-widest uppercase font-bold">Competencia Finalizada</p>
+                <p className="text-zinc-300 text-sm mt-1">
+                  Estos son los puntajes finales oficiales.
+                </p>
+              </div>
+            </section>
+          )}
+        </>
       )}
     </main>
+  );
+}
+
+// ── Pantalla de suspense ─────────────────────────────────────────────────────
+
+function SuspenseScreen() {
+  return (
+    <section className="px-4 sm:px-6 py-16 sm:py-24 text-center">
+      <div className="max-w-xl mx-auto space-y-4">
+        <div className="text-5xl sm:text-7xl animate-pulse">🏁</div>
+        <p className="text-yellow-400 text-xs sm:text-sm uppercase tracking-widest font-bold">
+          Resultados — Energy Race 2026
+        </p>
+        <h2 className="text-2xl sm:text-4xl font-black text-white">
+          Pronto conocerás los resultados
+        </h2>
+        <p className="text-zinc-400 text-sm sm:text-base leading-relaxed">
+          El administrador está finalizando la competencia.
+          <br />
+          Vuelve en unos minutos para ver el podio y los puntajes finales.
+        </p>
+        <div className="mt-8 flex items-center justify-center gap-2 text-zinc-500 text-xs">
+          <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+          <span>Esperando publicación</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ── Podio con flip cards ─────────────────────────────────────────────────────
+
+function FlipPodium({ rankings, revealStep }: { rankings: EnrichedRow[]; revealStep: number }) {
+  if (rankings.length === 0) {
+    return (
+      <p className="text-zinc-600 text-center py-8 uppercase tracking-widest text-sm">
+        Sin datos disponibles aún
+      </p>
+    );
+  }
+
+  // Slots fijos: índice 0 = 1° (centro), 1 = 2° (izquierda), 2 = 3° (derecha)
+  // En CSS visual, queremos que el 1° esté en el centro y más grande, pero
+  // por simplicidad, los mostramos en orden y dejamos al CSS el layout.
+  // Para móvil/desktop, una grilla 3 columnas con el 1° en medio.
+  const second = rankings[1];
+  const first = rankings[0];
+  const third = rankings[2];
+
+  // El revealStep controla cuántas tarjetas están reveladas:
+  //   1 = el 3° revelado (1 tarjeta)
+  //   2 = 2° y 3° revelados (2 tarjetas)
+  //   3 = 1°, 2° y 3° revelados (todas)
+  const revealedSet = new Set<number>();
+  if (revealStep >= 1) revealedSet.add(3);
+  if (revealStep >= 2) revealedSet.add(2);
+  if (revealStep >= 3) revealedSet.add(1);
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <p className="text-center text-yellow-400 text-xs sm:text-sm uppercase tracking-widest font-bold mb-6 sm:mb-10">
+        Podio
+      </p>
+      <div className="grid grid-cols-3 gap-3 sm:gap-6 items-end">
+        {/* 2° puesto - izquierda */}
+        <div className="flex flex-col items-center">
+          <FlipCard
+            position={2}
+            row={second}
+            revealed={revealedSet.has(2)}
+            sizeClass="h-56 sm:h-72"
+          />
+        </div>
+        {/* 1° puesto - centro (más alto) */}
+        <div className="flex flex-col items-center">
+          <FlipCard
+            position={1}
+            row={first}
+            revealed={revealedSet.has(1)}
+            sizeClass="h-64 sm:h-80"
+          />
+        </div>
+        {/* 3° puesto - derecha */}
+        <div className="flex flex-col items-center">
+          <FlipCard
+            position={3}
+            row={third}
+            revealed={revealedSet.has(3)}
+            sizeClass="h-52 sm:h-64"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FlipCard({
+  position,
+  row,
+  revealed,
+  sizeClass,
+}: {
+  position: number;
+  row: EnrichedRow | undefined;
+  revealed: boolean;
+  sizeClass: string;
+}) {
+  const medals: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
+  const colors: Record<number, string> = {
+    1: "border-yellow-400 text-yellow-400",
+    2: "border-zinc-300 text-zinc-300",
+    3: "border-amber-600 text-amber-600",
+  };
+
+  return (
+    <div
+      className={`w-full ${sizeClass} relative`}
+      style={{ perspective: "1000px" }}
+    >
+      <div
+        className="relative w-full h-full transition-transform duration-1000"
+        style={{
+          transformStyle: "preserve-3d",
+          transform: revealed ? "rotateX(180deg)" : "rotateX(0deg)",
+        }}
+      >
+        {/* Cara trasera (visible cuando NO revelado) */}
+        <div
+          className={`absolute inset-0 rounded-2xl border-2 ${colors[position]?.split(" ")[0]} bg-gradient-to-b from-zinc-900 via-black to-zinc-900 flex flex-col items-center justify-center p-4 gap-3`}
+          style={{ backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden" }}
+        >
+          <span className="text-5xl sm:text-6xl opacity-30">?</span>
+          <p className={`font-black text-2xl sm:text-3xl ${colors[position]?.split(" ").slice(1).join(" ")}`}>
+            {position}° lugar
+          </p>
+          <p className="text-zinc-600 text-xs uppercase tracking-widest text-center">
+            Esperando revelación
+          </p>
+        </div>
+
+        {/* Cara frontal (visible cuando SÍ revelado) — ojo: rotateX(180deg) la pone "derecha" */}
+        <div
+          className={`absolute inset-0 rounded-2xl border-2 overflow-hidden flex flex-col items-center justify-center p-3 sm:p-4 gap-2`}
+          style={{
+            backfaceVisibility: "hidden",
+            WebkitBackfaceVisibility: "hidden",
+            transform: "rotateX(180deg)",
+            borderColor: row?.color_hex ?? "#3f3f46",
+            background: row?.color_hex
+              ? `linear-gradient(180deg, ${row.color_hex}44 0%, ${row.color_hex}11 60%, #09090b 100%)`
+              : "#09090b",
+          }}
+        >
+          {row ? (
+            <>
+              <span className="text-4xl sm:text-5xl">{medals[position]}</span>
+              <p className={`text-[10px] sm:text-xs uppercase tracking-widest font-bold ${colors[position]?.split(" ").slice(1).join(" ")}`}>
+                {position}° lugar
+              </p>
+              <div className="text-center min-w-0 w-full px-2">
+                <p className="text-white text-base sm:text-lg font-bold leading-tight truncate">
+                  {row.team_name}
+                </p>
+                <p className="text-zinc-400 text-[10px] sm:text-xs truncate">{row.school}</p>
+              </div>
+              <div className="font-mono text-2xl sm:text-3xl font-black text-yellow-400 tabular-nums mt-1">
+                {row.total}
+                <span className="text-zinc-600 text-sm font-bold">/100</span>
+              </div>
+            </>
+          ) : (
+            <p className="text-zinc-600 text-xs italic">Sin datos</p>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -235,49 +436,6 @@ interface EnrichedRow extends RankingRow {
   verPts: number;
   total: number;
   finalPos: number;
-}
-
-function Top3Cards({ rankings }: { rankings: EnrichedRow[] }) {
-  if (rankings.length === 0) {
-    return (
-      <p className="text-zinc-600 text-center py-8 uppercase tracking-widest text-sm">
-        Sin datos disponibles aún
-      </p>
-    );
-  }
-
-  const medals = ["🥇", "🥈", "🥉"];
-  const colors = ["text-yellow-400", "text-zinc-300", "text-amber-600"];
-
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-      {rankings.map((r, i) => (
-        <div
-          key={r.team_id}
-          className="relative rounded-2xl border-2 overflow-hidden"
-          style={{
-            borderColor: r.color_hex,
-            background: `linear-gradient(135deg, ${r.color_hex}33 0%, ${r.color_hex}0a 60%, #09090b 100%)`,
-          }}
-        >
-          <div className="p-4 sm:p-5 flex flex-col items-center text-center gap-2">
-            <span className="text-4xl sm:text-5xl">{medals[i]}</span>
-            <p className={`text-xs uppercase tracking-widest font-bold ${colors[i]}`}>
-              {i + 1}° lugar
-            </p>
-            <div className="min-w-0 w-full">
-              <p className="text-white text-lg sm:text-xl font-bold truncate">{r.team_name}</p>
-              <p className="text-zinc-400 text-xs truncate">{r.school}</p>
-            </div>
-            <div className="font-mono text-3xl sm:text-4xl font-black text-yellow-400 tabular-nums mt-2">
-              {r.total}
-              <span className="text-zinc-600 text-base font-bold">/100</span>
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function ScoresTable({

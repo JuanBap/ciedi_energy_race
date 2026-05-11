@@ -54,3 +54,69 @@ export async function setEventStatus(
   revalidatePath("/admin");
   return { success: true };
 }
+
+// ── Publicación de resultados (control del podio en /scores) ─────────────────
+
+const EVENT_ID = "00000000-0000-0000-0000-000000000001";
+
+// Toggle: publicar resultados (modo "revelando") o volver a oculto
+export async function publishResults() {
+  await requireAdmin();
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("events")
+    .update({ results_published: true, podium_reveal_step: 0 })
+    .eq("id", EVENT_ID);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+  revalidatePath("/scores");
+  return { success: true };
+}
+
+export async function hideResults() {
+  await requireAdmin();
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("events")
+    .update({ results_published: false, podium_reveal_step: 0 })
+    .eq("id", EVENT_ID);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+  revalidatePath("/scores");
+  return { success: true };
+}
+
+// Revelar siguiente tarjeta del podio: 0 → 1 (3er) → 2 (2do) → 3 (1ro+tabla)
+export async function revealNextPodium() {
+  await requireAdmin();
+  const supabase = await createClient();
+  const { data: event } = await supabase
+    .from("events")
+    .select("podium_reveal_step")
+    .eq("id", EVENT_ID)
+    .single();
+  const current = event?.podium_reveal_step ?? 0;
+  const next = Math.min(current + 1, 3);
+  const { error } = await supabase
+    .from("events")
+    .update({ podium_reveal_step: next, results_published: true })
+    .eq("id", EVENT_ID);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+  revalidatePath("/scores");
+  return { success: true, step: next };
+}
+
+// Resetear el podio a step 0 (todas las tarjetas dadas vuelta otra vez)
+export async function resetPodiumReveal() {
+  await requireAdmin();
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("events")
+    .update({ podium_reveal_step: 0 })
+    .eq("id", EVENT_ID);
+  if (error) return { error: error.message };
+  revalidatePath("/admin");
+  revalidatePath("/scores");
+  return { success: true };
+}

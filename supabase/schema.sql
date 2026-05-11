@@ -32,11 +32,13 @@ create table users (
 -- EVENTO Y CATEGORÍAS
 -- ============================================================
 create table events (
-  id         uuid         primary key default gen_random_uuid(),
-  name       text         not null,
-  start_date date         not null,
-  status     event_status not null default 'draft',
-  created_at timestamptz  not null default now()
+  id                  uuid         primary key default gen_random_uuid(),
+  name                text         not null,
+  start_date          date         not null,
+  status              event_status not null default 'draft',
+  results_published   boolean      not null default false,
+  podium_reveal_step  int          not null default 0,
+  created_at          timestamptz  not null default now()
 );
 
 create table categories (

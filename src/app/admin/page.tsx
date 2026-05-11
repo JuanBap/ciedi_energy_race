@@ -50,7 +50,13 @@ export default async function AdminDashboard() {
         status={event?.status ?? "—"}
       />
 
-      {event && <EventStatusControl currentStatus={event.status as "draft" | "active" | "finished"} />}
+      {event && (
+        <EventStatusControl
+          currentStatus={event.status as "draft" | "active" | "finished"}
+          resultsPublished={event.results_published ?? false}
+          podiumStep={event.podium_reveal_step ?? 0}
+        />
+      )}
 
       <div className="grid md:grid-cols-2 gap-4">
         <Card className="bg-zinc-900 border-zinc-700">
