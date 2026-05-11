@@ -9,19 +9,19 @@ export default async function TimerPage() {
   const profile = await requireRole(["timer", "admin"]);
   const supabase = await createClient();
 
-  // Asignación del usuario (test_type + carril)
+  // Asignación del usuario: solo guarda el test_type (velocity/versatility).
+  // El carril específico se determina por manga (heat_assignments.timer_user_id).
   const { data: assignment } = await supabase
     .from("user_assignments")
     .select("*")
     .eq("user_id", profile.id)
     .eq("event_id", EVENT_ID)
-    .single();
+    .maybeSingle();
 
   const testType = assignment?.test_type ?? "velocity";
-  const lane = assignment?.lane ?? null;
 
-  // Traer TODAS las mangas del test_type (no filtrar por status aquí)
-  // — el cliente decide qué mostrar según estado + asignaciones del carril
+  // Traer todas las mangas del test_type. El cliente filtra por
+  // heat_assignments.timer_user_id === profile.id
   const { data: heats } = await supabase
     .from("heats")
     .select(`
@@ -36,12 +36,12 @@ export default async function TimerPage() {
     .eq("test_type", testType)
     .order("heat_number");
 
-  // Filtrar heat_assignments por carril del usuario (solo aplica a velocidad)
+  // Por cada heat, dejar solo las heat_assignments donde el timer soy yo.
   const filteredHeats = (heats ?? []).map((heat) => ({
     ...heat,
-    heat_assignments: lane
-      ? heat.heat_assignments.filter((ha: { lane: string | null }) => ha.lane === lane)
-      : heat.heat_assignments,
+    heat_assignments: heat.heat_assignments.filter(
+      (ha: { timer_user_id: string | null }) => ha.timer_user_id === profile.id
+    ),
   }));
 
   return (
@@ -50,7 +50,6 @@ export default async function TimerPage() {
       assignment={assignment}
       heats={filteredHeats}
       testType={testType}
-      lane={lane}
     />
   );
 }

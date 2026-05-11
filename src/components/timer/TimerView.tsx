@@ -30,6 +30,7 @@ interface Run {
 interface HeatAssignment {
   id: string;
   lane: string | null;
+  timer_user_id: string | null;
   teams: Team | null;
   runs: Run[];
 }
@@ -44,7 +45,6 @@ interface Heat {
 
 interface UserAssignment {
   test_type: TestType;
-  lane: Lane | null;
 }
 
 interface Props {
@@ -52,14 +52,15 @@ interface Props {
   assignment: UserAssignment | null;
   heats: Heat[];
   testType: TestType;
-  lane: Lane | null;
 }
 
 const EVENT_ID = "00000000-0000-0000-0000-000000000001";
 const LS_KEY = "timer_backup";
-const TERMINAL_RUN_STATUSES = ["recorded", "failed", "reprogrammed"];
+// Solo 'recorded' es realmente "completado". 'failed' significa que el admin
+// invalidó el tiempo y el cronometrista debe enviar uno nuevo (no es terminal).
+const COMPLETED_RUN_STATUSES = ["recorded"];
 
-export default function TimerView({ profile, assignment, heats: initialHeats, testType, lane }: Props) {
+export default function TimerView({ profile, assignment, heats: initialHeats, testType }: Props) {
   const [heats, setHeats] = useState<Heat[]>(initialHeats);
   const [running, setRunning] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -82,12 +83,12 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
   );
 
   // Por cada heat asignado, obtenemos el "estado de mi run":
-  //   pending     → no hay run, o el run está en status=pending
-  //   completed   → el run está en recorded/failed/reprogrammed
+  //   pending     → no hay run, o run con status=pending/failed (admin pidió repetir)
+  //   completed   → run con status=recorded
   function runState(ha: HeatAssignment): "pending" | "completed" {
-    const run = ha.runs?.[0];
-    if (!run || run.status === "pending") return "pending";
-    if (TERMINAL_RUN_STATUSES.includes(run.status)) return "completed";
+    // Buscar el run más reciente (puede haber varios si el admin repitió)
+    const recordedRun = ha.runs?.find((r) => COMPLETED_RUN_STATUSES.includes(r.status));
+    if (recordedRun) return "completed";
     return "pending";
   }
 
@@ -131,6 +132,22 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
     }
   }, [activeAssignment, activeHaId, submitted]);
 
+  // Si estoy en submitted=true pero el admin invalidó mi run (resetLaneRun),
+  // volver al estado de runner activo para que pueda enviar de nuevo.
+  useEffect(() => {
+    if (!submitted || !activeHaId) return;
+    const allAssignments = heats.flatMap((h) => h.heat_assignments);
+    const myAssignment = allAssignments.find((a) => a.id === activeHaId);
+    if (myAssignment && runState(myAssignment) === "pending") {
+      // El admin marcó el run como failed → permitir reenvío
+      setSubmitted(false);
+      setElapsedMs(0);
+      setHasPenalty(false);
+      toast.info("El admin solicitó repetir esta manga. Listo para nuevo tiempo.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heats, submitted, activeHaId]);
+
   // ── Realtime: actualizar `heats` cuando cambien runs o heats ───────────────
   const refetch = useCallback(async () => {
     const supabase = createClient();
@@ -141,15 +158,16 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
       .eq("test_type", testType)
       .order("heat_number");
     if (data) {
+      // Filtrar por timer_user_id = mi user_id (la nueva fuente de verdad)
       const filtered = data.map((h) => ({
         ...h,
-        heat_assignments: lane
-          ? h.heat_assignments.filter((ha: HeatAssignment) => ha.lane === lane)
-          : h.heat_assignments,
+        heat_assignments: h.heat_assignments.filter(
+          (ha: HeatAssignment) => ha.timer_user_id === profile.id
+        ),
       }));
       setHeats(filtered);
     }
-  }, [testType, lane]);
+  }, [testType, profile.id]);
 
   useEffect(() => { setHeats(initialHeats); }, [initialHeats]);
 
@@ -241,6 +259,9 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
 
   const totalWithPenalty = elapsedMs + (hasPenalty ? 10000 : 0);
 
+  // El "lane" visible es el del heat activo si existe, si no, del próximo
+  const currentLane = (activeAssignment?.lane ?? null) as Lane | null;
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <main className="min-h-screen bg-zinc-950 text-white flex flex-col overflow-x-hidden">
@@ -254,7 +275,7 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
             className="h-6 sm:h-7 w-auto object-contain shrink-0"
             priority
           />
-          {lane && <Badge className="bg-blue-700 text-white text-xs shrink-0">{lane}</Badge>}
+          {currentLane && <Badge className="bg-blue-700 text-white text-xs shrink-0">{currentLane}</Badge>}
           {testType === "versatility" && (
             <Badge className="bg-green-700 text-white text-xs shrink-0">Versatilidad</Badge>
           )}
@@ -278,17 +299,13 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
       <div className="flex-1 flex flex-col items-center px-3 sm:px-6 py-4 sm:py-6 gap-4 sm:gap-6">
         {!assignment ? (
           <EmptyState
-            title="Sin asignación de carril"
-            message="Tu usuario no tiene asignado un carril ni prueba para este evento. Pídele al admin que te asigne en la sección Operadores."
+            title="Sin asignación al evento"
+            message="Tu usuario no tiene asignada una prueba en este evento. Pídele al admin que te agregue en la sección Operadores."
           />
         ) : myHeats.length === 0 ? (
           <EmptyState
             title="Sin mangas asignadas"
-            message={
-              lane
-                ? `No hay mangas con tu carril ${lane} en el fixture todavía. Pídele al admin que cargue el fixture de ${testType === "velocity" ? "velocidad" : "versatilidad"}.`
-                : "No hay mangas asignadas a tu rol. Pídele al admin que cargue el fixture."
-            }
+            message={`El admin no te ha asignado ningún carril en las mangas de ${testType === "velocity" ? "velocidad" : "versatilidad"} todavía. Aparecerás aquí cuando te asignen a un carril en el fixture.`}
           />
         ) : !activeAssignment && upcomingHeats.length === 0 ? (
           <EmptyState
@@ -297,13 +314,13 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
             tone="success"
           />
         ) : !activeAssignment ? (
-          <WaitingState upcomingHeats={upcomingHeats} lane={lane} testType={testType} />
+          <WaitingState upcomingHeats={upcomingHeats} testType={testType} />
         ) : (
           <ActiveRunner
             assignment={activeAssignment}
             heat={activeHeat!}
             testType={testType}
-            lane={lane}
+            lane={currentLane}
             running={running}
             submitted={submitted}
             submitting={submitting}
@@ -386,11 +403,9 @@ function EmptyState({
 
 function WaitingState({
   upcomingHeats,
-  lane,
   testType,
 }: {
   upcomingHeats: Heat[];
-  lane: Lane | null;
   testType: TestType;
 }) {
   const next = upcomingHeats[0];
@@ -410,7 +425,12 @@ function WaitingState({
       {next && (
         <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-4 space-y-2">
           <p className="text-zinc-500 text-xs uppercase tracking-wider">Tu próxima manga</p>
-          <p className="text-yellow-400 text-3xl font-bold">M{next.heat_number}</p>
+          <div className="flex items-center justify-center gap-2">
+            <p className="text-yellow-400 text-3xl font-bold">M{next.heat_number}</p>
+            {next.heat_assignments[0]?.lane && (
+              <Badge className="bg-blue-700 text-white text-xs">{next.heat_assignments[0].lane}</Badge>
+            )}
+          </div>
           {nextTeam && (
             <div className="flex items-center justify-center gap-2">
               <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: nextTeam.color_hex }} />

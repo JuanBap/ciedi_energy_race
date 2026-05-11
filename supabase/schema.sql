@@ -70,7 +70,6 @@ create table user_assignments (
   user_id    uuid      not null references users(id) on delete cascade,
   event_id   uuid      not null references events(id) on delete cascade,
   test_type  test_type not null,
-  lane       lane_type,
   created_at timestamptz not null default now(),
   unique(user_id, event_id, test_type)
 );
@@ -89,10 +88,11 @@ create table heats (
 );
 
 create table heat_assignments (
-  id      uuid      primary key default gen_random_uuid(),
-  heat_id uuid      not null references heats(id) on delete cascade,
-  team_id uuid      not null references teams(id) on delete cascade,
-  lane    lane_type,
+  id            uuid      primary key default gen_random_uuid(),
+  heat_id       uuid      not null references heats(id) on delete cascade,
+  team_id       uuid      not null references teams(id) on delete cascade,
+  lane          lane_type,
+  timer_user_id uuid      references users(id) on delete set null,
   unique (heat_id, team_id)
 );
 
@@ -100,6 +100,11 @@ create table heat_assignments (
 create unique index heat_assignments_heat_lane_unique
   on heat_assignments (heat_id, lane)
   where lane is not null;
+
+-- Un cronometrista no puede estar en dos carriles de la misma manga
+create unique index heat_assignments_heat_timer_unique
+  on heat_assignments (heat_id, timer_user_id)
+  where timer_user_id is not null;
 
 -- ============================================================
 -- TIEMPOS / RUNS
@@ -291,13 +296,13 @@ insert into users (id, email, password_hash, role, full_name) values
    '$2b$10$OYCXOlxmf/9S.XXcL.DA7.gc2AT0Nfojg.SGR5HLy.XyIKiJ9HXxa',
    'judge', 'Juez Versatilidad');
 
--- Asignaciones carril/prueba de los operadores
-insert into user_assignments (user_id, event_id, test_type, lane) values
+-- Asignaciones de prueba de los operadores (carril ya no es fijo; se asigna por manga)
+insert into user_assignments (user_id, event_id, test_type) values
   ('00000000-0000-0000-0000-000000000101',
-   '00000000-0000-0000-0000-000000000001', 'velocity', 'C2'),
+   '00000000-0000-0000-0000-000000000001', 'velocity'),
   ('00000000-0000-0000-0000-000000000102',
-   '00000000-0000-0000-0000-000000000001', 'velocity', 'C4'),
+   '00000000-0000-0000-0000-000000000001', 'velocity'),
   ('00000000-0000-0000-0000-000000000103',
-   '00000000-0000-0000-0000-000000000001', 'velocity', 'C6'),
+   '00000000-0000-0000-0000-000000000001', 'velocity'),
   ('00000000-0000-0000-0000-000000000104',
-   '00000000-0000-0000-0000-000000000001', 'versatility', null);
+   '00000000-0000-0000-0000-000000000001', 'versatility');

@@ -49,13 +49,13 @@ export async function changePassword(userId: string, newPassword: string) {
 export async function assignUserToEvent(
   userId: string,
   testType: TestType,
-  lane: Lane | null
+  _lane?: Lane | null  // ya no se usa: el carril se asigna por manga, no por usuario
 ) {
   await requireAdmin();
   const supabase = await createClient();
 
   const { error } = await supabase.from("user_assignments").upsert(
-    { user_id: userId, event_id: EVENT_ID, test_type: testType, lane },
+    { user_id: userId, event_id: EVENT_ID, test_type: testType },
     { onConflict: "user_id,event_id,test_type" }
   );
 

@@ -9,9 +9,13 @@ import {
   loadVelocityFixture,
   loadVersatilityFixture,
   deleteHeat,
-  updateVelocityHeat,
   updateVersatilityHeat,
+  assignLane,
+  clearLane,
+  resetLaneRun,
+  resetHeatRuns,
 } from "@/app/actions/fixtures";
+import { setHeatStatus } from "@/app/actions/heats";
 import { toast } from "sonner";
 import type { Lane } from "@/types/database";
 
@@ -22,6 +26,13 @@ interface Team {
   categories: { slug: string; name: string } | null;
 }
 
+interface TimerUser {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: string;
+}
+
 interface HeatTeam {
   id: string;
   name: string;
@@ -29,11 +40,21 @@ interface HeatTeam {
   color_hex: string;
 }
 
+interface Run {
+  id: string;
+  status: string;
+  time_ms: number | null;
+  has_penalty_velocity: boolean;
+}
+
 interface HeatAssignment {
   id: string;
   team_id: string;
   lane: string | null;
+  timer_user_id: string | null;
   teams: HeatTeam | null;
+  timer: { id: string; full_name: string | null; email: string } | null;
+  runs: Run[];
 }
 
 interface Heat {
@@ -45,6 +66,7 @@ interface Heat {
 
 interface Props {
   teams: Team[];
+  timers: TimerUser[];
   velocityHeats: Heat[];
   versatilityHeats: Heat[];
 }
@@ -57,33 +79,18 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   reprogrammed: { label: "Reprogramada", color: "bg-blue-700 text-white" },
 };
 
-// Render reusable de un equipo (color + nombre + colegio)
-function TeamCell({ team }: { team: HeatTeam | null | undefined }) {
-  if (!team) return <span className="text-zinc-600">—</span>;
-  return (
-    <div className="flex items-center gap-2">
-      <div
-        className="w-3 h-3 rounded-full shrink-0 border border-zinc-600"
-        style={{ backgroundColor: team.color_hex }}
-        title={team.color_hex}
-      />
-      <div className="min-w-0">
-        <div className="text-zinc-200 truncate">{team.name}</div>
-        <div className="text-zinc-500 text-xs truncate">{team.school}</div>
-      </div>
-    </div>
-  );
-}
+const LANES: Lane[] = ["C2", "C4", "C6"];
 
-export default function FixturesManager({ teams, velocityHeats, versatilityHeats }: Props) {
+export default function FixturesManager({ teams, timers, velocityHeats, versatilityHeats }: Props) {
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-4 text-sm text-zinc-400">
-        <p className="font-medium text-zinc-300 mb-1">¿Cómo funciona?</p>
+        <p className="font-medium text-zinc-300 mb-1">Cómo funciona</p>
         <ul className="list-disc list-inside space-y-0.5">
-          <li><span className="text-white">Velocidad</span> — hasta 3 equipos corren a la vez, uno por carril.</li>
-          <li><span className="text-white">Versatilidad</span> — los equipos corren uno a la vez en orden de manga.</li>
-          <li>Puedes editar o borrar cualquier manga del fixture (siempre que no esté en curso).</li>
+          <li><span className="text-white">Velocidad</span> — hasta 3 equipos en paralelo (uno por carril). Los carriles pueden quedar vacíos.</li>
+          <li><span className="text-white">Versatilidad</span> — un equipo por manga, en orden de salida.</li>
+          <li>El admin asigna en cada celda: equipo + cronometrista. Cuando activas la manga, los 3 cronometristas designados pueden cronometrar a la vez.</li>
+          <li>Si un tiempo sale mal, usa <strong>Repetir</strong> en ese carril para invalidarlo y permitir un nuevo intento.</li>
         </ul>
       </div>
 
@@ -98,7 +105,7 @@ export default function FixturesManager({ teams, velocityHeats, versatilityHeats
         </TabsList>
 
         <TabsContent value="velocity" className="mt-4">
-          <VelocityFixture teams={teams} heats={velocityHeats} />
+          <VelocityFixture teams={teams} timers={timers} heats={velocityHeats} />
         </TabsContent>
         <TabsContent value="versatility" className="mt-4">
           <VersatilityFixture teams={teams} heats={versatilityHeats} />
@@ -108,19 +115,20 @@ export default function FixturesManager({ teams, velocityHeats, versatilityHeats
   );
 }
 
-// ── Velocity ──────────────────────────────────────────────────────────────────
+// ── Velocity (con timer + lane CRUD) ─────────────────────────────────────────
 
 type VelocityRow = { c2: string; c4: string; c6: string };
 
-function VelocityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) {
+function VelocityFixture({
+  teams, timers, heats,
+}: { teams: Team[]; timers: TimerUser[]; heats: Heat[] }) {
   const [rows, setRows] = useState<VelocityRow[]>([{ c2: "", c4: "", c6: "" }]);
   const [loading, setLoading] = useState(false);
-  const [editingHeat, setEditingHeat] = useState<Heat | null>(null);
+  const [editingCell, setEditingCell] = useState<{ heat: Heat; lane: Lane } | null>(null);
   const [deletingHeat, setDeletingHeat] = useState<Heat | null>(null);
+  const [resettingHeat, setResettingHeat] = useState<Heat | null>(null);
 
-  const startHeatNum = heats.length > 0
-    ? Math.max(...heats.map((h) => h.heat_number)) + 1
-    : 1;
+  const startHeatNum = heats.length > 0 ? Math.max(...heats.map((h) => h.heat_number)) + 1 : 1;
 
   function updateRow(i: number, lane: "c2" | "c4" | "c6", value: string) {
     const updated = [...rows];
@@ -131,7 +139,7 @@ function VelocityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) {
   function addRow() { setRows([...rows, { c2: "", c4: "", c6: "" }]); }
   function removeRow(i: number) { setRows(rows.filter((_, idx) => idx !== i)); }
 
-  async function handleSave() {
+  async function handleSaveNewFixture() {
     const flat: { team_id: string; heat_number: number; lane: Lane }[] = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
@@ -148,57 +156,90 @@ function VelocityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) {
     setLoading(false);
   }
 
+  async function handleSetStatus(heatId: string, status: "active" | "finished" | "pending") {
+    const result = await setHeatStatus(heatId, status);
+    if (result?.error) toast.error(result.error);
+    else toast.success(`Manga ${status === "active" ? "activada" : status === "finished" ? "finalizada" : "reabierta"}`);
+  }
+
   return (
     <div className="space-y-6">
       {heats.length > 0 && (
         <div className="space-y-2">
           <h3 className="font-semibold text-white">Fixture cargado — Velocidad</h3>
-          <div className="overflow-hidden rounded-lg border border-zinc-700">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-zinc-700">
+            <table className="w-full text-sm min-w-[900px]">
               <thead>
                 <tr className="border-b border-zinc-700 bg-zinc-800/60">
-                  <th className="py-2 px-3 text-left text-zinc-400 font-medium w-16">Manga</th>
+                  <th className="py-2 px-3 text-left text-zinc-400 font-medium w-14">Manga</th>
                   <th className="py-2 px-3 text-left text-zinc-400 font-medium">Carril 2</th>
                   <th className="py-2 px-3 text-left text-zinc-400 font-medium">Carril 4</th>
                   <th className="py-2 px-3 text-left text-zinc-400 font-medium">Carril 6</th>
                   <th className="py-2 px-3 text-left text-zinc-400 font-medium w-28">Estado</th>
-                  <th className="py-2 px-3 text-right text-zinc-400 font-medium w-32">Acciones</th>
+                  <th className="py-2 px-3 text-right text-zinc-400 font-medium w-44">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {heats.map((heat) => {
-                  const byLane: Record<string, HeatTeam | null> = {};
+                  const byLane: Record<string, HeatAssignment | null> = {};
                   for (const ha of heat.heat_assignments) {
-                    if (ha.lane) byLane[ha.lane] = ha.teams;
+                    if (ha.lane) byLane[ha.lane] = ha;
                   }
                   const s = STATUS_LABEL[heat.status] ?? STATUS_LABEL.pending;
-                  const disabled = heat.status === "active";
+                  const isActive = heat.status === "active";
+
                   return (
-                    <tr key={heat.id} className="border-b border-zinc-700/50 hover:bg-zinc-800/30 transition-colors">
-                      <td className="py-2 px-3 font-bold text-yellow-400 align-top">M{heat.heat_number}</td>
-                      <td className="py-2 px-3 align-top"><TeamCell team={byLane["C2"]} /></td>
-                      <td className="py-2 px-3 align-top"><TeamCell team={byLane["C4"]} /></td>
-                      <td className="py-2 px-3 align-top"><TeamCell team={byLane["C6"]} /></td>
-                      <td className="py-2 px-3 align-top">
+                    <tr key={heat.id} className="border-b border-zinc-700/50 hover:bg-zinc-800/30 transition-colors align-top">
+                      <td className="py-2 px-3 font-bold text-yellow-400 pt-3">M{heat.heat_number}</td>
+                      {LANES.map((lane) => (
+                        <td key={lane} className="py-2 px-3">
+                          <LaneCell
+                            ha={byLane[lane] ?? null}
+                            heat={heat}
+                            lane={lane}
+                            onAssign={() => setEditingCell({ heat, lane })}
+                          />
+                        </td>
+                      ))}
+                      <td className="py-2 px-3 pt-3">
                         <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${s.color}`}>
                           {s.label}
                         </span>
                       </td>
-                      <td className="py-2 px-3 text-right align-top">
-                        <div className="inline-flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={disabled}
-                            onClick={() => setEditingHeat(heat)}
-                            className="h-7 text-xs border-zinc-600 text-zinc-300 hover:bg-zinc-800"
-                          >
-                            Editar
-                          </Button>
+                      <td className="py-2 px-3 text-right pt-2">
+                        <div className="flex gap-1 justify-end flex-wrap">
+                          {heat.status === "pending" && (
+                            <Button
+                              size="sm"
+                              onClick={() => handleSetStatus(heat.id, "active")}
+                              className="h-7 text-xs bg-green-700 hover:bg-green-600 text-white"
+                            >
+                              ▶ Activar
+                            </Button>
+                          )}
+                          {isActive && (
+                            <Button
+                              size="sm"
+                              onClick={() => handleSetStatus(heat.id, "finished")}
+                              className="h-7 text-xs bg-blue-700 hover:bg-blue-600 text-white"
+                            >
+                              Cerrar
+                            </Button>
+                          )}
+                          {(heat.status === "finished" || heat.status === "failed") && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setResettingHeat(heat)}
+                              className="h-7 text-xs border-yellow-700 text-yellow-400 hover:bg-yellow-900/30"
+                            >
+                              🔁 Repetir
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="destructive"
-                            disabled={disabled}
+                            disabled={isActive}
                             onClick={() => setDeletingHeat(heat)}
                             className="h-7 text-xs"
                           >
@@ -221,7 +262,7 @@ function VelocityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) {
           <h3 className="font-semibold text-white">
             {heats.length > 0 ? `Agregar mangas (desde M${startHeatNum})` : "Cargar fixture"}
           </h3>
-          <p className="text-xs text-zinc-500">Deja vacío un carril si no corre nadie en él</p>
+          <p className="text-xs text-zinc-500">Asigna cronometristas después con &quot;Editar&quot; en cada carril</p>
         </div>
 
         <div className="grid grid-cols-[3.5rem_1fr_1fr_1fr_2rem] gap-2 px-1">
@@ -258,7 +299,6 @@ function VelocityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) {
               onClick={() => removeRow(i)}
               disabled={rows.length === 1}
               className="text-zinc-600 hover:text-red-400 disabled:opacity-20 transition-colors text-xl leading-none"
-              title="Eliminar fila"
             >
               ×
             </button>
@@ -271,7 +311,7 @@ function VelocityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) {
           </Button>
           <Button
             size="sm"
-            onClick={handleSave}
+            onClick={handleSaveNewFixture}
             disabled={loading}
             className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium"
           >
@@ -280,23 +320,291 @@ function VelocityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) {
         </div>
       </div>
 
-      {/* Edit modal */}
-      <EditVelocityModal
-        heat={editingHeat}
+      <AssignLaneModal
+        cell={editingCell}
         teams={teams}
-        onClose={() => setEditingHeat(null)}
+        timers={timers}
+        onClose={() => setEditingCell(null)}
       />
-
-      {/* Delete confirm modal */}
-      <DeleteHeatModal
-        heat={deletingHeat}
-        onClose={() => setDeletingHeat(null)}
-      />
+      <DeleteHeatModal heat={deletingHeat} onClose={() => setDeletingHeat(null)} />
+      <ResetHeatModal heat={resettingHeat} onClose={() => setResettingHeat(null)} />
     </div>
   );
 }
 
-// ── Versatility ───────────────────────────────────────────────────────────────
+// Render de cada celda de carril con acciones inline
+function LaneCell({
+  ha, heat, lane, onAssign,
+}: {
+  ha: HeatAssignment | null;
+  heat: Heat;
+  lane: Lane;
+  onAssign: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+
+  async function handleClear() {
+    if (!ha) return;
+    if (!confirm(`¿Liberar el carril ${lane} de M${heat.heat_number}? Se borrará el equipo y su tiempo.`)) return;
+    setLoading(true);
+    const r = await clearLane(ha.id);
+    if (r?.error) toast.error(r.error);
+    else toast.success(`Carril ${lane} liberado`);
+    setLoading(false);
+  }
+
+  async function handleReset() {
+    if (!ha) return;
+    setLoading(true);
+    const r = await resetLaneRun(ha.id);
+    if (r?.error) toast.error(r.error);
+    else toast.success(`Tiempo de carril ${lane} invalidado, listo para reintento`);
+    setLoading(false);
+  }
+
+  if (!ha) {
+    return (
+      <button
+        onClick={onAssign}
+        disabled={heat.status === "active"}
+        className="text-zinc-500 hover:text-yellow-400 text-xs italic disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+      >
+        + Asignar
+      </button>
+    );
+  }
+
+  const run = ha.runs?.[0];
+  const hasRecordedRun = run && run.status === "recorded";
+  const timerLabel = ha.timer?.full_name ?? ha.timer?.email ?? null;
+  const disabled = heat.status === "active" || loading;
+
+  return (
+    <div className="space-y-1 min-w-0">
+      <div className="flex items-center gap-2 min-w-0">
+        {ha.teams && (
+          <div
+            className="w-2.5 h-2.5 rounded-full shrink-0 border border-zinc-600"
+            style={{ backgroundColor: ha.teams.color_hex }}
+          />
+        )}
+        <div className="min-w-0">
+          <p className="text-zinc-100 text-sm font-medium truncate">{ha.teams?.name ?? "—"}</p>
+          <p className="text-zinc-500 text-xs truncate">{ha.teams?.school}</p>
+        </div>
+      </div>
+      <p className={`text-xs truncate ${timerLabel ? "text-blue-400" : "text-zinc-600 italic"}`}>
+        {timerLabel ? `👤 ${timerLabel}` : "sin cronometrista"}
+      </p>
+      <div className="flex gap-1 mt-1">
+        <button
+          onClick={onAssign}
+          disabled={disabled}
+          className="text-zinc-400 hover:text-yellow-400 text-xs disabled:opacity-30 disabled:cursor-not-allowed"
+          title="Editar este carril"
+        >
+          ✏️ Editar
+        </button>
+        <button
+          onClick={handleClear}
+          disabled={disabled}
+          className="text-zinc-400 hover:text-red-400 text-xs disabled:opacity-30 disabled:cursor-not-allowed"
+          title="Liberar este carril"
+        >
+          🗑 Borrar
+        </button>
+        {hasRecordedRun && (
+          <button
+            onClick={handleReset}
+            disabled={loading}
+            className="text-zinc-400 hover:text-yellow-400 text-xs disabled:opacity-30"
+            title="Invalidar tiempo y permitir nuevo intento"
+          >
+            🔁 Repetir
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Modals ────────────────────────────────────────────────────────────────────
+
+function AssignLaneModal({
+  cell, teams, timers, onClose,
+}: {
+  cell: { heat: Heat; lane: Lane } | null;
+  teams: Team[];
+  timers: TimerUser[];
+  onClose: () => void;
+}) {
+  const [teamId, setTeamId] = useState("");
+  const [timerId, setTimerId] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!cell) return;
+    const existing = cell.heat.heat_assignments.find((a) => a.lane === cell.lane);
+    setTeamId(existing?.team_id ?? "");
+    setTimerId(existing?.timer_user_id ?? "");
+  }, [cell]);
+
+  async function handleSave() {
+    if (!cell) return;
+    if (!teamId || teamId === "none") { toast.error("Selecciona un equipo"); return; }
+    setLoading(true);
+    const r = await assignLane(cell.heat.id, cell.lane, teamId, timerId || null);
+    if (r?.error) toast.error(r.error);
+    else { toast.success(`Carril ${cell.lane} actualizado`); onClose(); }
+    setLoading(false);
+  }
+
+  return (
+    <Dialog open={!!cell} onOpenChange={(o) => !o && !loading && onClose()}>
+      <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md w-[calc(100vw-1.5rem)]">
+        <DialogHeader>
+          <DialogTitle>Asignar carril {cell?.lane} — M{cell?.heat.heat_number}</DialogTitle>
+          <DialogDescription className="text-zinc-400">
+            Define qué equipo corre en este carril y qué cronometrista lo opera.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-2">
+            <label className="text-zinc-300 text-sm">Equipo</label>
+            <Select value={teamId || ""} onValueChange={setTeamId}>
+              <SelectTrigger className="bg-zinc-800 border-zinc-600 text-white w-full">
+                <SelectValue placeholder="Seleccionar equipo" />
+              </SelectTrigger>
+              <SelectContent className="bg-zinc-800 border-zinc-700">
+                {teams.map((t) => (
+                  <SelectItem key={t.id} value={t.id} className="text-white">
+                    <span>{t.name} <span className="text-zinc-400">— {t.school}</span></span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-zinc-300 text-sm">Cronometrista</label>
+            <Select value={timerId || "none"} onValueChange={(v) => setTimerId(v === "none" ? "" : v)}>
+              <SelectTrigger className="bg-zinc-800 border-zinc-600 text-white w-full">
+                <SelectValue placeholder="Sin cronometrista" />
+              </SelectTrigger>
+              <SelectContent className="bg-zinc-800 border-zinc-700">
+                <SelectItem value="none" className="text-zinc-400 italic">Sin cronometrista</SelectItem>
+                {timers.map((u) => (
+                  <SelectItem key={u.id} value={u.id} className="text-white">
+                    <span>
+                      {u.full_name ?? u.email}
+                      {u.role === "admin" && <span className="ml-1 text-xs text-zinc-400">(admin)</span>}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-zinc-500">
+              El cronometrista verá este carril cuando actives la manga.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 pt-2">
+          <Button variant="outline" onClick={onClose} disabled={loading} className="border-zinc-600 text-zinc-300">
+            Cancelar
+          </Button>
+          <Button onClick={handleSave} disabled={loading} className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium">
+            {loading ? "Guardando..." : "Guardar"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ResetHeatModal({ heat, onClose }: { heat: Heat | null; onClose: () => void }) {
+  const [loading, setLoading] = useState(false);
+
+  async function handleReset() {
+    if (!heat) return;
+    setLoading(true);
+    const r = await resetHeatRuns(heat.id);
+    if (r?.error) toast.error(r.error);
+    else { toast.success(`M${heat.heat_number}: tiempos invalidados`); onClose(); }
+    setLoading(false);
+  }
+
+  const affected = heat?.heat_assignments
+    .filter((a) => a.runs?.some((r) => r.status === "recorded"))
+    .map((a) => `${a.teams?.name ?? "—"} (${a.lane})`)
+    .join(", ");
+
+  return (
+    <Dialog open={!!heat} onOpenChange={(o) => !o && !loading && onClose()}>
+      <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md w-[calc(100vw-1.5rem)]">
+        <DialogHeader>
+          <DialogTitle>¿Repetir manga M{heat?.heat_number}?</DialogTitle>
+          <DialogDescription className="text-zinc-400">
+            Los tiempos ya registrados quedarán marcados como inválidos (auditoría) y los
+            cronometristas podrán enviar nuevos tiempos. Después de confirmar, vuelve a
+            activar la manga.
+            {affected && (
+              <span className="block mt-2 text-zinc-300">Afecta: {affected}</span>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3 pt-2">
+          <Button variant="outline" onClick={onClose} disabled={loading} className="border-zinc-600 text-zinc-300">
+            Cancelar
+          </Button>
+          <Button onClick={handleReset} disabled={loading} className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium">
+            {loading ? "Procesando..." : "Confirmar repetición"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DeleteHeatModal({ heat, onClose }: { heat: Heat | null; onClose: () => void }) {
+  const [loading, setLoading] = useState(false);
+
+  async function handleDelete() {
+    if (!heat) return;
+    setLoading(true);
+    const r = await deleteHeat(heat.id);
+    if (r?.error) toast.error(r.error);
+    else { toast.success(`M${heat.heat_number} eliminada`); onClose(); }
+    setLoading(false);
+  }
+
+  const teamNames = heat?.heat_assignments
+    .map((a) => a.teams?.name)
+    .filter(Boolean)
+    .join(", ");
+
+  return (
+    <Dialog open={!!heat} onOpenChange={(o) => !o && !loading && onClose()}>
+      <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md w-[calc(100vw-1.5rem)]">
+        <DialogHeader>
+          <DialogTitle>¿Eliminar manga M{heat?.heat_number}?</DialogTitle>
+          <DialogDescription className="text-zinc-400">
+            Esta acción no se puede deshacer.
+            {teamNames && <> Se eliminarán las asignaciones de: <span className="text-zinc-200">{teamNames}</span>.</>}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3 pt-2">
+          <Button variant="outline" onClick={onClose} disabled={loading} className="border-zinc-600 text-zinc-300">
+            Cancelar
+          </Button>
+          <Button variant="destructive" onClick={handleDelete} disabled={loading}>
+            {loading ? "Eliminando..." : "Eliminar"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Versatility (sin carriles ni timer; un equipo por manga) ─────────────────
 
 function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) {
   const [rows, setRows] = useState<string[]>([""]);
@@ -304,9 +612,7 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
   const [editingHeat, setEditingHeat] = useState<Heat | null>(null);
   const [deletingHeat, setDeletingHeat] = useState<Heat | null>(null);
 
-  const startHeatNum = heats.length > 0
-    ? Math.max(...heats.map((h) => h.heat_number)) + 1
-    : 1;
+  const startHeatNum = heats.length > 0 ? Math.max(...heats.map((h) => h.heat_number)) + 1 : 1;
 
   function addRow() { setRows([...rows, ""]); }
   function removeRow(i: number) { setRows(rows.filter((_, idx) => idx !== i)); }
@@ -323,6 +629,12 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
     setLoading(false);
   }
 
+  async function handleSetStatus(heatId: string, status: "active" | "finished") {
+    const result = await setHeatStatus(heatId, status);
+    if (result?.error) toast.error(result.error);
+    else toast.success(`Manga ${status === "active" ? "activada" : "finalizada"}`);
+  }
+
   return (
     <div className="space-y-6">
       {heats.length > 0 && (
@@ -335,43 +647,41 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
                   <th className="py-2 px-3 text-left text-zinc-400 font-medium w-16">Manga</th>
                   <th className="py-2 px-3 text-left text-zinc-400 font-medium">Equipo</th>
                   <th className="py-2 px-3 text-left text-zinc-400 font-medium w-28">Estado</th>
-                  <th className="py-2 px-3 text-right text-zinc-400 font-medium w-32">Acciones</th>
+                  <th className="py-2 px-3 text-right text-zinc-400 font-medium w-44">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {heats.map((heat) => {
                   const team = heat.heat_assignments[0]?.teams;
                   const s = STATUS_LABEL[heat.status] ?? STATUS_LABEL.pending;
-                  const disabled = heat.status === "active";
+                  const isActive = heat.status === "active";
                   return (
-                    <tr key={heat.id} className="border-b border-zinc-700/50 hover:bg-zinc-800/30 transition-colors">
-                      <td className="py-2 px-3 font-bold text-yellow-400 align-top">M{heat.heat_number}</td>
-                      <td className="py-2 px-3 align-top"><TeamCell team={team} /></td>
-                      <td className="py-2 px-3 align-top">
-                        <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${s.color}`}>
-                          {s.label}
-                        </span>
+                    <tr key={heat.id} className="border-b border-zinc-700/50 hover:bg-zinc-800/30">
+                      <td className="py-2 px-3 font-bold text-yellow-400">M{heat.heat_number}</td>
+                      <td className="py-2 px-3">
+                        {team ? (
+                          <div className="flex items-center gap-2">
+                            <div className="w-2.5 h-2.5 rounded-full shrink-0 border border-zinc-600" style={{ backgroundColor: team.color_hex }} />
+                            <div className="min-w-0">
+                              <p className="text-zinc-200 truncate">{team.name}</p>
+                              <p className="text-zinc-500 text-xs truncate">{team.school}</p>
+                            </div>
+                          </div>
+                        ) : <span className="text-zinc-600">Sin equipo</span>}
                       </td>
-                      <td className="py-2 px-3 text-right align-top">
-                        <div className="inline-flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={disabled}
-                            onClick={() => setEditingHeat(heat)}
-                            className="h-7 text-xs border-zinc-600 text-zinc-300 hover:bg-zinc-800"
-                          >
-                            Editar
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            disabled={disabled}
-                            onClick={() => setDeletingHeat(heat)}
-                            className="h-7 text-xs"
-                          >
-                            Borrar
-                          </Button>
+                      <td className="py-2 px-3">
+                        <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${s.color}`}>{s.label}</span>
+                      </td>
+                      <td className="py-2 px-3 text-right">
+                        <div className="flex gap-1 justify-end flex-wrap">
+                          {heat.status === "pending" && (
+                            <Button size="sm" onClick={() => handleSetStatus(heat.id, "active")} className="h-7 text-xs bg-green-700 hover:bg-green-600 text-white">▶ Activar</Button>
+                          )}
+                          {isActive && (
+                            <Button size="sm" onClick={() => handleSetStatus(heat.id, "finished")} className="h-7 text-xs bg-blue-700 hover:bg-blue-600 text-white">Cerrar</Button>
+                          )}
+                          <Button size="sm" variant="outline" disabled={isActive} onClick={() => setEditingHeat(heat)} className="h-7 text-xs border-zinc-600 text-zinc-300">Editar</Button>
+                          <Button size="sm" variant="destructive" disabled={isActive} onClick={() => setDeletingHeat(heat)} className="h-7 text-xs">Borrar</Button>
                         </div>
                       </td>
                     </tr>
@@ -383,32 +693,20 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
         </div>
       )}
 
-      {/* Editor para agregar mangas nuevas */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-white">
-            {heats.length > 0 ? `Agregar mangas (desde M${startHeatNum})` : "Cargar fixture"}
-          </h3>
+          <h3 className="font-semibold text-white">{heats.length > 0 ? `Agregar mangas (desde M${startHeatNum})` : "Cargar fixture"}</h3>
           <p className="text-xs text-zinc-500">Un equipo por manga, en orden de salida</p>
         </div>
-
         <div className="grid grid-cols-[3.5rem_1fr_2rem] gap-2 px-1">
           <span className="text-xs font-medium text-zinc-500 self-center">Manga</span>
           <span className="text-xs font-medium text-zinc-400">Equipo</span>
           <span />
         </div>
-
         {rows.map((teamId, i) => (
           <div key={i} className="grid grid-cols-[3.5rem_1fr_2rem] gap-2 items-center">
             <span className="text-center text-sm font-bold text-yellow-400">M{startHeatNum + i}</span>
-            <Select
-              value={teamId || "none"}
-              onValueChange={(v) => {
-                const updated = [...rows];
-                updated[i] = v === "none" ? "" : v;
-                setRows(updated);
-              }}
-            >
+            <Select value={teamId || "none"} onValueChange={(v) => { const u = [...rows]; u[i] = v === "none" ? "" : v; setRows(u); }}>
               <SelectTrigger className="bg-zinc-800 border-zinc-600 text-white w-full">
                 <SelectValue placeholder="Seleccionar equipo" />
               </SelectTrigger>
@@ -420,237 +718,64 @@ function VersatilityFixture({ teams, heats }: { teams: Team[]; heats: Heat[] }) 
                 ))}
               </SelectContent>
             </Select>
-            <button
-              onClick={() => removeRow(i)}
-              disabled={rows.length === 1}
-              className="text-zinc-600 hover:text-red-400 disabled:opacity-20 transition-colors text-xl leading-none"
-            >
-              ×
-            </button>
+            <button onClick={() => removeRow(i)} disabled={rows.length === 1} className="text-zinc-600 hover:text-red-400 disabled:opacity-20 text-xl leading-none">×</button>
           </div>
         ))}
-
         <div className="flex gap-3 pt-1">
-          <Button variant="outline" size="sm" onClick={addRow} className="border-zinc-600 text-zinc-300">
-            + Agregar manga
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={loading}
-            className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium"
-          >
+          <Button variant="outline" size="sm" onClick={addRow} className="border-zinc-600 text-zinc-300">+ Agregar manga</Button>
+          <Button size="sm" onClick={handleSave} disabled={loading} className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium">
             {loading ? "Guardando..." : "Guardar fixture"}
           </Button>
         </div>
       </div>
 
-      <EditVersatilityModal
-        heat={editingHeat}
-        teams={teams}
-        onClose={() => setEditingHeat(null)}
-      />
-      <DeleteHeatModal
-        heat={deletingHeat}
-        onClose={() => setDeletingHeat(null)}
-      />
+      <EditVersatilityModal heat={editingHeat} teams={teams} onClose={() => setEditingHeat(null)} />
+      <DeleteHeatModal heat={deletingHeat} onClose={() => setDeletingHeat(null)} />
     </div>
   );
 }
 
-// ── Modals ────────────────────────────────────────────────────────────────────
-
-function EditVelocityModal({
-  heat,
-  teams,
-  onClose,
-}: {
-  heat: Heat | null;
-  teams: Team[];
-  onClose: () => void;
-}) {
-  const [c2, setC2] = useState("");
-  const [c4, setC4] = useState("");
-  const [c6, setC6] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  // Cuando se abre, pre-llena con las asignaciones actuales
-  useStateInit(heat, () => {
-    if (!heat) return;
-    const byLane: Record<string, string> = {};
-    for (const a of heat.heat_assignments) {
-      if (a.lane && a.team_id) byLane[a.lane] = a.team_id;
-    }
-    setC2(byLane["C2"] ?? "");
-    setC4(byLane["C4"] ?? "");
-    setC6(byLane["C6"] ?? "");
-  });
-
-  async function handleSave() {
-    if (!heat) return;
-    const assignments: { team_id: string; lane: Lane }[] = [];
-    if (c2 && c2 !== "none") assignments.push({ team_id: c2, lane: "C2" });
-    if (c4 && c4 !== "none") assignments.push({ team_id: c4, lane: "C4" });
-    if (c6 && c6 !== "none") assignments.push({ team_id: c6, lane: "C6" });
-
-    setLoading(true);
-    const result = await updateVelocityHeat(heat.id, assignments);
-    if (result?.error) toast.error(result.error);
-    else { toast.success(`M${heat.heat_number} actualizada`); onClose(); }
-    setLoading(false);
-  }
-
-  return (
-    <Dialog open={!!heat} onOpenChange={(o) => !o && !loading && onClose()}>
-      <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Editar manga M{heat?.heat_number} — Velocidad</DialogTitle>
-          <DialogDescription className="text-zinc-400">
-            Cambia los equipos de cada carril. Selecciona &quot;Sin equipo&quot; para dejar un carril vacío.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          {(["C2", "C4", "C6"] as const).map((lane) => {
-            const value = lane === "C2" ? c2 : lane === "C4" ? c4 : c6;
-            const setter = lane === "C2" ? setC2 : lane === "C4" ? setC4 : setC6;
-            return (
-              <div key={lane} className="grid grid-cols-[5rem_1fr] gap-3 items-center">
-                <label className="text-zinc-400 text-sm">Carril {lane.slice(1)}</label>
-                <Select value={value || "none"} onValueChange={(v) => setter(v === "none" ? "" : v)}>
-                  <SelectTrigger className="bg-zinc-800 border-zinc-600 text-white w-full">
-                    <SelectValue placeholder="Sin equipo" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-zinc-800 border-zinc-700">
-                    <SelectItem value="none" className="text-zinc-400 italic">Sin equipo</SelectItem>
-                    {teams.map((t) => (
-                      <SelectItem key={t.id} value={t.id} className="text-white">
-                        <span>{t.name} <span className="text-zinc-400">— {t.school}</span></span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            );
-          })}
-        </div>
-        <div className="grid grid-cols-2 gap-3 pt-2">
-          <Button variant="outline" onClick={onClose} disabled={loading} className="border-zinc-600 text-zinc-300">
-            Cancelar
-          </Button>
-          <Button onClick={handleSave} disabled={loading} className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium">
-            {loading ? "Guardando..." : "Guardar cambios"}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function EditVersatilityModal({
-  heat,
-  teams,
-  onClose,
-}: {
-  heat: Heat | null;
-  teams: Team[];
-  onClose: () => void;
-}) {
+function EditVersatilityModal({ heat, teams, onClose }: { heat: Heat | null; teams: Team[]; onClose: () => void }) {
   const [teamId, setTeamId] = useState("");
   const [loading, setLoading] = useState(false);
 
-  useStateInit(heat, () => {
+  useEffect(() => {
     if (!heat) return;
     setTeamId(heat.heat_assignments[0]?.team_id ?? "");
-  });
+  }, [heat]);
 
   async function handleSave() {
-    if (!heat) return;
-    if (!teamId || teamId === "none") { toast.error("Selecciona un equipo"); return; }
+    if (!heat || !teamId || teamId === "none") { toast.error("Selecciona un equipo"); return; }
     setLoading(true);
-    const result = await updateVersatilityHeat(heat.id, teamId);
-    if (result?.error) toast.error(result.error);
+    const r = await updateVersatilityHeat(heat.id, teamId);
+    if (r?.error) toast.error(r.error);
     else { toast.success(`M${heat.heat_number} actualizada`); onClose(); }
     setLoading(false);
   }
 
   return (
     <Dialog open={!!heat} onOpenChange={(o) => !o && !loading && onClose()}>
-      <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md">
+      <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md w-[calc(100vw-1.5rem)]">
         <DialogHeader>
-          <DialogTitle>Editar manga M{heat?.heat_number} — Versatilidad</DialogTitle>
-          <DialogDescription className="text-zinc-400">
-            Cambia el equipo asignado a esta manga.
-          </DialogDescription>
+          <DialogTitle>Editar M{heat?.heat_number} — Versatilidad</DialogTitle>
         </DialogHeader>
-        <div className="py-2">
-          <Select value={teamId || ""} onValueChange={setTeamId}>
-            <SelectTrigger className="bg-zinc-800 border-zinc-600 text-white w-full">
-              <SelectValue placeholder="Seleccionar equipo" />
-            </SelectTrigger>
-            <SelectContent className="bg-zinc-800 border-zinc-700">
-              {teams.map((t) => (
-                <SelectItem key={t.id} value={t.id} className="text-white">
-                  <span>{t.name} <span className="text-zinc-400">— {t.school}</span></span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <Select value={teamId || ""} onValueChange={setTeamId}>
+          <SelectTrigger className="bg-zinc-800 border-zinc-600 text-white w-full">
+            <SelectValue placeholder="Seleccionar equipo" />
+          </SelectTrigger>
+          <SelectContent className="bg-zinc-800 border-zinc-700">
+            {teams.map((t) => (
+              <SelectItem key={t.id} value={t.id} className="text-white">
+                <span>{t.name} <span className="text-zinc-400">— {t.school}</span></span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <div className="grid grid-cols-2 gap-3 pt-2">
-          <Button variant="outline" onClick={onClose} disabled={loading} className="border-zinc-600 text-zinc-300">
-            Cancelar
-          </Button>
-          <Button onClick={handleSave} disabled={loading} className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium">
-            {loading ? "Guardando..." : "Guardar cambios"}
-          </Button>
+          <Button variant="outline" onClick={onClose} disabled={loading} className="border-zinc-600 text-zinc-300">Cancelar</Button>
+          <Button onClick={handleSave} disabled={loading} className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium">{loading ? "Guardando..." : "Guardar"}</Button>
         </div>
       </DialogContent>
     </Dialog>
   );
-}
-
-function DeleteHeatModal({ heat, onClose }: { heat: Heat | null; onClose: () => void }) {
-  const [loading, setLoading] = useState(false);
-
-  async function handleDelete() {
-    if (!heat) return;
-    setLoading(true);
-    const result = await deleteHeat(heat.id);
-    if (result?.error) toast.error(result.error);
-    else { toast.success(`M${heat.heat_number} eliminada`); onClose(); }
-    setLoading(false);
-  }
-
-  const teamNames = heat?.heat_assignments
-    .map((a) => a.teams?.name)
-    .filter(Boolean)
-    .join(", ");
-
-  return (
-    <Dialog open={!!heat} onOpenChange={(o) => !o && !loading && onClose()}>
-      <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md">
-        <DialogHeader>
-          <DialogTitle>¿Eliminar manga M{heat?.heat_number}?</DialogTitle>
-          <DialogDescription className="text-zinc-400">
-            Esta acción no se puede deshacer.
-            {teamNames && <> Se eliminarán las asignaciones de: <span className="text-zinc-200">{teamNames}</span>.</>}
-            {heat?.heat_assignments.some((a) => false) /* placeholder for runs check */ && null}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid grid-cols-2 gap-3 pt-2">
-          <Button variant="outline" onClick={onClose} disabled={loading} className="border-zinc-600 text-zinc-300">
-            Cancelar
-          </Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={loading}>
-            {loading ? "Eliminando..." : "Eliminar"}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// Helper para resetear estado del modal cuando se abre con una manga distinta
-function useStateInit(dep: unknown, fn: () => void) {
-  useEffect(() => { fn(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [dep]);
 }
