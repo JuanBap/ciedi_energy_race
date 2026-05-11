@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { formatTime } from "@/lib/utils";
@@ -118,7 +118,9 @@ export default function LiveScoreboard({
       .on("postgres_changes", { event: "*", schema: "public", table: "heat_assignments" }, refetchAll)
       .subscribe((status) => setConnected(status === "SUBSCRIBED"));
 
-    const interval = setInterval(refetchAll, 4000);
+    // Polling agresivo cada 2s para que cualquier borrado o cambio
+    // se propague rápidamente incluso si Realtime falla.
+    const interval = setInterval(refetchAll, 2000);
 
     return () => {
       supabase.removeChannel(channel);
@@ -240,27 +242,6 @@ function FilterChip({
   );
 }
 
-// ── Cronómetro en vivo ───────────────────────────────────────────────────────
-
-function LiveClock({ startedAt }: { startedAt: string | null }) {
-  const [ms, setMs] = useState(0);
-  const rafRef = useRef<number>(0);
-
-  useEffect(() => {
-    if (!startedAt) { setMs(0); return; }
-    const start = new Date(startedAt).getTime();
-    const tick = () => {
-      setMs(Date.now() - start);
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [startedAt]);
-
-  if (!startedAt) return <>00:00</>;
-  return <>{formatTime(ms)}</>;
-}
-
 // ── Tablero por manga ─────────────────────────────────────────────────────────
 
 function HeatBoard({ heat }: { heat: Heat }) {
@@ -290,14 +271,7 @@ function HeatBoard({ heat }: { heat: Heat }) {
       <div className={`flex items-center justify-between px-4 sm:px-5 py-3 border-b ${isActive ? "border-red-600/30 bg-red-600/5" : "border-zinc-800 bg-zinc-900/50"}`}>
         <div className="flex items-center gap-3">
           <span className="text-2xl sm:text-3xl font-black text-yellow-400">M{heat.heat_number}</span>
-          <div>
-            <p className="text-zinc-300 text-sm font-medium uppercase tracking-wider">{testLabel}</p>
-            {isActive && heat.started_at && (
-              <p className="font-mono text-xs sm:text-sm text-zinc-400 tabular-nums">
-                <LiveClock startedAt={heat.started_at} />
-              </p>
-            )}
-          </div>
+          <p className="text-zinc-300 text-sm font-medium uppercase tracking-wider">{testLabel}</p>
         </div>
         <Badge className={`${s.color} ${s.pulse ? "animate-pulse" : ""} text-xs font-bold tracking-wider`}>
           {s.label}
@@ -317,7 +291,6 @@ function HeatBoard({ heat }: { heat: Heat }) {
             <LaneCard
               key={ha.id}
               ha={ha}
-              heatStartedAt={heat.started_at}
               isActive={isActive}
               isFinished={isFinished}
               position={positionMap.get(ha.id)}
@@ -331,13 +304,11 @@ function HeatBoard({ heat }: { heat: Heat }) {
 
 function LaneCard({
   ha,
-  heatStartedAt,
   isActive,
   isFinished,
   position,
 }: {
   ha: HeatAssignment;
-  heatStartedAt: string | null;
   isActive: boolean;
   isFinished: boolean;
   position: number | undefined;
@@ -421,11 +392,11 @@ function LaneCard({
               )}
             </div>
           ) : isActive ? (
-            <div className="flex items-end gap-2">
-              <span className="font-mono text-2xl sm:text-3xl font-black tabular-nums text-green-400 leading-none">
-                <LiveClock startedAt={heatStartedAt} />
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-red-400 text-base sm:text-lg font-black uppercase tracking-widest animate-pulse">
+                En curso
               </span>
-              <span className="text-zinc-500 text-[10px] uppercase tracking-wider mb-1 animate-pulse">en pista</span>
             </div>
           ) : isFinished ? (
             <span className="text-zinc-600 text-sm italic">Sin tiempo registrado</span>

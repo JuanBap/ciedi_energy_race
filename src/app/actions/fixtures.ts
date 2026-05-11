@@ -101,6 +101,7 @@ export async function loadVelocityFixture(rows: VelocityFixtureRow[]) {
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   return { success: true };
 }
 
@@ -152,6 +153,7 @@ export async function loadVersatilityFixture(rows: VersatilityFixtureRow[]) {
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   return { success: true };
 }
 
@@ -186,6 +188,7 @@ export async function deleteHeat(heatId: string) {
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   return { success: true };
 }
 
@@ -258,6 +261,7 @@ export async function assignLane(
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   return { success: true };
 }
 
@@ -274,6 +278,7 @@ export async function clearLane(heatAssignmentId: string) {
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   return { success: true };
 }
 
@@ -291,6 +296,7 @@ export async function setLaneTimer(heatAssignmentId: string, timerUserId: string
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   return { success: true };
 }
 
@@ -311,6 +317,7 @@ export async function resetLaneRun(heatAssignmentId: string) {
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   revalidatePath("/admin/runs");
   return { success: true };
 }
@@ -347,6 +354,7 @@ export async function restartHeat(heatId: string) {
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   revalidatePath("/admin/runs");
   return { success: true };
 }
@@ -374,6 +382,7 @@ export async function resetHeatRuns(heatId: string) {
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   revalidatePath("/admin/runs");
   return { success: true };
 }
@@ -410,6 +419,7 @@ export async function updateVersatilityHeat(
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   return { success: true };
 }
 
@@ -427,5 +437,6 @@ export async function setVersatilityTimer(heatId: string, timerUserId: string | 
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
   return { success: true };
 }
