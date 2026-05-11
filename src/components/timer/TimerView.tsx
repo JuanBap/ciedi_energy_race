@@ -51,6 +51,7 @@ interface Props {
   profile: UserProfile;
   assignment: UserAssignment | null;
   heats: Heat[];
+  testType: TestType;
 }
 
 const EVENT_ID = "00000000-0000-0000-0000-000000000001";
@@ -59,7 +60,7 @@ const LS_KEY = "timer_backup";
 // invalidó el tiempo y el cronometrista debe enviar uno nuevo (no es terminal).
 const COMPLETED_RUN_STATUSES = ["recorded"];
 
-export default function TimerView({ profile, assignment, heats: initialHeats }: Props) {
+export default function TimerView({ profile, assignment, heats: initialHeats, testType }: Props) {
   const [heats, setHeats] = useState<Heat[]>(initialHeats);
   const [running, setRunning] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -154,10 +155,10 @@ export default function TimerView({ profile, assignment, heats: initialHeats }: 
       .from("heats")
       .select(`*, heat_assignments(*, teams(id, name, school, color_hex, shield_url), runs(*))`)
       .eq("event_id", EVENT_ID)
+      .eq("test_type", testType)
       .order("heat_number");
     if (data) {
-      // Filtrar por timer_user_id = mi user_id (la nueva fuente de verdad,
-      // independiente del test_type asignado al usuario)
+      // Filtrar por timer_user_id = mi user_id (la nueva fuente de verdad)
       const filtered = data.map((h) => ({
         ...h,
         heat_assignments: h.heat_assignments.filter(
@@ -166,7 +167,7 @@ export default function TimerView({ profile, assignment, heats: initialHeats }: 
       }));
       setHeats(filtered);
     }
-  }, [profile.id]);
+  }, [testType, profile.id]);
 
   useEffect(() => { setHeats(initialHeats); }, [initialHeats]);
 
@@ -261,13 +262,6 @@ export default function TimerView({ profile, assignment, heats: initialHeats }: 
   // El "lane" visible es el del heat activo si existe, si no, del próximo
   const currentLane = (activeAssignment?.lane ?? null) as Lane | null;
 
-  // El test_type es el del heat activo (o el primer heat asignado, o el del user)
-  const currentTestType: TestType =
-    (activeHeat?.test_type as TestType | undefined) ??
-    (myHeats[0]?.test_type as TestType | undefined) ??
-    (assignment?.test_type as TestType | undefined) ??
-    "velocity";
-
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <main className="min-h-screen bg-zinc-950 text-white flex flex-col overflow-x-hidden">
@@ -282,7 +276,7 @@ export default function TimerView({ profile, assignment, heats: initialHeats }: 
             priority
           />
           {currentLane && <Badge className="bg-blue-700 text-white text-xs shrink-0">{currentLane}</Badge>}
-          {currentTestType === "versatility" && (
+          {testType === "versatility" && (
             <Badge className="bg-green-700 text-white text-xs shrink-0">Versatilidad</Badge>
           )}
           <div className="hidden sm:flex items-center gap-1 ml-2 text-xs text-zinc-500">
@@ -311,7 +305,7 @@ export default function TimerView({ profile, assignment, heats: initialHeats }: 
         ) : myHeats.length === 0 ? (
           <EmptyState
             title="Sin mangas asignadas"
-            message="El admin todavía no te ha asignado como cronometrista en ninguna manga. Aparecerás aquí cuando te asignen en el fixture."
+            message={`El admin no te ha asignado ningún carril en las mangas de ${testType === "velocity" ? "velocidad" : "versatilidad"} todavía. Aparecerás aquí cuando te asignen a un carril en el fixture.`}
           />
         ) : !activeAssignment && upcomingHeats.length === 0 ? (
           <EmptyState
@@ -320,12 +314,12 @@ export default function TimerView({ profile, assignment, heats: initialHeats }: 
             tone="success"
           />
         ) : !activeAssignment ? (
-          <WaitingState upcomingHeats={upcomingHeats} />
+          <WaitingState upcomingHeats={upcomingHeats} testType={testType} />
         ) : (
           <ActiveRunner
             assignment={activeAssignment}
             heat={activeHeat!}
-            testType={(activeHeat!.test_type as TestType) ?? currentTestType}
+            testType={testType}
             lane={currentLane}
             running={running}
             submitted={submitted}
@@ -409,8 +403,10 @@ function EmptyState({
 
 function WaitingState({
   upcomingHeats,
+  testType,
 }: {
   upcomingHeats: Heat[];
+  testType: TestType;
 }) {
   const next = upcomingHeats[0];
   const nextTeam = next?.heat_assignments[0]?.teams;

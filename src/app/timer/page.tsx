@@ -9,10 +9,8 @@ export default async function TimerPage() {
   const profile = await requireRole(["timer", "admin"]);
   const supabase = await createClient();
 
-  // user_assignments.test_type es solo una preferencia/hint; la asignación
-  // operativa la hace el admin por manga (heat_assignments.timer_user_id).
-  // Un cronometrista puede operar mangas de velocidad Y de versatilidad si
-  // el admin lo asigna en ambas — por eso no filtramos por test_type aquí.
+  // Asignación del usuario: solo guarda el test_type (velocity/versatility).
+  // El carril específico se determina por manga (heat_assignments.timer_user_id).
   const { data: assignment } = await supabase
     .from("user_assignments")
     .select("*")
@@ -20,6 +18,10 @@ export default async function TimerPage() {
     .eq("event_id", EVENT_ID)
     .maybeSingle();
 
+  const testType = assignment?.test_type ?? "velocity";
+
+  // Traer todas las mangas del test_type. El cliente filtra por
+  // heat_assignments.timer_user_id === profile.id
   const { data: heats } = await supabase
     .from("heats")
     .select(`
@@ -31,6 +33,7 @@ export default async function TimerPage() {
       )
     `)
     .eq("event_id", EVENT_ID)
+    .eq("test_type", testType)
     .order("heat_number");
 
   // Por cada heat, dejar solo las heat_assignments donde el timer soy yo.
@@ -46,6 +49,7 @@ export default async function TimerPage() {
       profile={profile}
       assignment={assignment}
       heats={filteredHeats}
+      testType={testType}
     />
   );
 }
