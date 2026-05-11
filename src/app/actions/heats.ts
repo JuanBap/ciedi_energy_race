@@ -17,7 +17,13 @@ export async function setHeatStatus(
     .eq("id", heatId);
 
   if (error) return { error: error.message };
+  // Revalidar TODAS las páginas que muestran estado de mangas
   revalidatePath("/admin/heats");
+  revalidatePath("/admin/fixtures");
+  revalidatePath("/admin/runs");
+  revalidatePath("/admin");
+  revalidatePath("/timer");
+  revalidatePath("/live");
   return { success: true };
 }
 
