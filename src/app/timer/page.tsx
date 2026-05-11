@@ -20,8 +20,11 @@ export default async function TimerPage() {
 
   const testType = assignment?.test_type ?? "velocity";
 
-  // Traer todas las mangas del test_type. El cliente filtra por
-  // heat_assignments.timer_user_id === profile.id
+  // Traer todas las mangas del evento (ambos test_types).
+  // user_assignments.test_type es solo un hint inicial; la asignación
+  // operativa la hace el admin por manga vía heat_assignments.timer_user_id.
+  // Un cronometrista puede operar mangas de velocidad Y de versatilidad
+  // si el admin lo asigna en ambas.
   const { data: heats } = await supabase
     .from("heats")
     .select(`
@@ -33,7 +36,6 @@ export default async function TimerPage() {
       )
     `)
     .eq("event_id", EVENT_ID)
-    .eq("test_type", testType)
     .order("heat_number");
 
   // Por cada heat, dejar solo las heat_assignments donde el timer soy yo.

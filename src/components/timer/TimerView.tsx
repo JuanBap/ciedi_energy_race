@@ -148,17 +148,16 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heats, submitted, activeHaId]);
 
-  // ── Realtime: actualizar `heats` cuando cambien runs o heats ───────────────
+  // ── Realtime + polling backup ────────────────────────────────────────────
   const refetch = useCallback(async () => {
     const supabase = createClient();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("heats")
       .select(`*, heat_assignments(*, teams(id, name, school, color_hex, shield_url), runs(*))`)
       .eq("event_id", EVENT_ID)
-      .eq("test_type", testType)
       .order("heat_number");
+    if (error) return;
     if (data) {
-      // Filtrar por timer_user_id = mi user_id (la nueva fuente de verdad)
       const filtered = data.map((h) => ({
         ...h,
         heat_assignments: h.heat_assignments.filter(
@@ -167,20 +166,29 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
       }));
       setHeats(filtered);
     }
-  }, [testType, profile.id]);
+  }, [profile.id]);
 
   useEffect(() => { setHeats(initialHeats); }, [initialHeats]);
 
   useEffect(() => {
     const supabase = createClient();
+    // Channel name único por usuario para evitar colisiones entre pestañas
     const channel = supabase
-      .channel("timer-sync")
+      .channel(`timer-${profile.id}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "heats" }, refetch)
       .on("postgres_changes", { event: "*", schema: "public", table: "heat_assignments" }, refetch)
       .on("postgres_changes", { event: "*", schema: "public", table: "runs" }, refetch)
-      .subscribe((s) => setConnected(s === "SUBSCRIBED"));
-    return () => { supabase.removeChannel(channel); };
-  }, [refetch]);
+      .subscribe((status) => setConnected(status === "SUBSCRIBED"));
+
+    // Polling backup cada 3s — si Realtime falla por cualquier razón,
+    // el timer no se queda colgado esperando el evento.
+    const interval = setInterval(refetch, 3000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
+  }, [refetch, profile.id]);
 
   // ── Cronómetro ─────────────────────────────────────────────────────────────
   function tick() {
@@ -262,6 +270,14 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
   // El "lane" visible es el del heat activo si existe, si no, del próximo
   const currentLane = (activeAssignment?.lane ?? null) as Lane | null;
 
+  // El test_type se deriva del heat activo (NO del prop fijo), porque un
+  // cronometrista puede operar mangas de ambos test_types si el admin lo
+  // asigna en ambas.
+  const currentTestType: TestType =
+    (activeHeat?.test_type as TestType | undefined) ??
+    (myHeats[0]?.test_type as TestType | undefined) ??
+    testType;
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <main className="min-h-screen bg-zinc-950 text-white flex flex-col overflow-x-hidden">
@@ -276,7 +292,7 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
             priority
           />
           {currentLane && <Badge className="bg-blue-700 text-white text-xs shrink-0">{currentLane}</Badge>}
-          {testType === "versatility" && (
+          {currentTestType === "versatility" && (
             <Badge className="bg-green-700 text-white text-xs shrink-0">Versatilidad</Badge>
           )}
           <div className="hidden sm:flex items-center gap-1 ml-2 text-xs text-zinc-500">
@@ -305,7 +321,7 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
         ) : myHeats.length === 0 ? (
           <EmptyState
             title="Sin mangas asignadas"
-            message={`El admin no te ha asignado ningún carril en las mangas de ${testType === "velocity" ? "velocidad" : "versatilidad"} todavía. Aparecerás aquí cuando te asignen a un carril en el fixture.`}
+            message="El admin todavía no te ha asignado como cronometrista en ninguna manga. Aparecerás aquí cuando te asignen en el fixture."
           />
         ) : !activeAssignment && upcomingHeats.length === 0 ? (
           <EmptyState
@@ -314,12 +330,12 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
             tone="success"
           />
         ) : !activeAssignment ? (
-          <WaitingState upcomingHeats={upcomingHeats} testType={testType} />
+          <WaitingState upcomingHeats={upcomingHeats} />
         ) : (
           <ActiveRunner
             assignment={activeAssignment}
             heat={activeHeat!}
-            testType={testType}
+            testType={(activeHeat!.test_type as TestType) ?? currentTestType}
             lane={currentLane}
             running={running}
             submitted={submitted}
@@ -403,10 +419,8 @@ function EmptyState({
 
 function WaitingState({
   upcomingHeats,
-  testType,
 }: {
   upcomingHeats: Heat[];
-  testType: TestType;
 }) {
   const next = upcomingHeats[0];
   const nextTeam = next?.heat_assignments[0]?.teams;

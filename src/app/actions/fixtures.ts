@@ -22,7 +22,33 @@ export async function loadVelocityFixture(rows: VelocityFixtureRow[]) {
   await requireAdmin();
   const supabase = await createClient();
 
-  // Get or create heats for each heat_number
+  // ── Validación defensiva ────────────────────────────────────────────────
+  // 1. Un mismo equipo no puede aparecer dos veces en la misma manga
+  //    (aunque sea en carriles distintos — un equipo solo corre un vehículo)
+  const teamPerHeat = new Map<string, Set<string>>(); // heatNum → set de team_ids
+  for (const r of rows) {
+    const key = String(r.heat_number);
+    if (!teamPerHeat.has(key)) teamPerHeat.set(key, new Set());
+    const set = teamPerHeat.get(key)!;
+    if (set.has(r.team_id)) {
+      return { error: `Manga ${key}: un mismo equipo no puede estar en dos carriles a la vez. Revisa la fila.` };
+    }
+    set.add(r.team_id);
+  }
+
+  // 2. Un carril no puede tener dos equipos en la misma manga
+  const lanePerHeat = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const key = String(r.heat_number);
+    if (!lanePerHeat.has(key)) lanePerHeat.set(key, new Set());
+    const set = lanePerHeat.get(key)!;
+    if (set.has(r.lane)) {
+      return { error: `Manga ${key}: el carril ${r.lane} tiene dos equipos asignados.` };
+    }
+    set.add(r.lane);
+  }
+
+  // ── Persistencia ─────────────────────────────────────────────────────────
   const heatNumbers = Array.from(new Set(rows.map((r) => r.heat_number)));
 
   for (const heatNum of heatNumbers) {
@@ -32,7 +58,7 @@ export async function loadVelocityFixture(rows: VelocityFixtureRow[]) {
       .eq("event_id", EVENT_ID)
       .eq("test_type", "velocity")
       .eq("heat_number", heatNum)
-      .single();
+      .maybeSingle();
 
     let heatId: string;
 
@@ -48,18 +74,33 @@ export async function loadVelocityFixture(rows: VelocityFixtureRow[]) {
       heatId = existing.id;
     }
 
-    const assignments = rows
-      .filter((r) => r.heat_number === heatNum)
-      .map((r) => ({ heat_id: heatId, team_id: r.team_id, lane: r.lane }));
+    // Para evitar conflictos con asignaciones previas en este heat:
+    // borramos cualquier asignación existente para los TEAM_IDs o LANES
+    // que vamos a (re)insertar, así el INSERT es siempre limpio.
+    const rowsForHeat = rows.filter((r) => r.heat_number === heatNum);
+    const teamIds = rowsForHeat.map((r) => r.team_id);
+    const lanes = rowsForHeat.map((r) => r.lane);
 
-    const { error } = await supabase
-      .from("heat_assignments")
-      .upsert(assignments, { onConflict: "heat_id,team_id" });
+    if (teamIds.length > 0) {
+      await supabase
+        .from("heat_assignments")
+        .delete()
+        .eq("heat_id", heatId)
+        .or(`team_id.in.(${teamIds.join(",")}),lane.in.(${lanes.join(",")})`);
+    }
 
+    const assignments = rowsForHeat.map((r) => ({
+      heat_id: heatId,
+      team_id: r.team_id,
+      lane: r.lane,
+    }));
+
+    const { error } = await supabase.from("heat_assignments").insert(assignments);
     if (error) return { error: error.message };
   }
 
   revalidatePath("/admin/fixtures");
+  revalidatePath("/admin/heats");
   return { success: true };
 }
 
@@ -67,7 +108,12 @@ export async function loadVersatilityFixture(rows: VersatilityFixtureRow[]) {
   await requireAdmin();
   const supabase = await createClient();
 
-  const heatNumbers = Array.from(new Set(rows.map((r) => r.heat_number)));
+  // Validación: una manga de versatilidad solo tiene UN equipo (la última gana)
+  const dedupedMap = new Map<number, VersatilityFixtureRow>();
+  for (const r of rows) dedupedMap.set(r.heat_number, r);
+  const deduped = Array.from(dedupedMap.values());
+
+  const heatNumbers = deduped.map((r) => r.heat_number);
 
   for (const heatNum of heatNumbers) {
     const { data: existing } = await supabase
@@ -76,7 +122,7 @@ export async function loadVersatilityFixture(rows: VersatilityFixtureRow[]) {
       .eq("event_id", EVENT_ID)
       .eq("test_type", "versatility")
       .eq("heat_number", heatNum)
-      .single();
+      .maybeSingle();
 
     let heatId: string;
 
@@ -92,18 +138,20 @@ export async function loadVersatilityFixture(rows: VersatilityFixtureRow[]) {
       heatId = existing.id;
     }
 
-    const assignments = rows
-      .filter((r) => r.heat_number === heatNum)
-      .map((r) => ({ heat_id: heatId, team_id: r.team_id, lane: null }));
+    // Versatilidad: una sola asignación por manga (la última gana si vienen duplicadas)
+    const rowForHeat = deduped.find((r) => r.heat_number === heatNum)!;
+    // Borrar cualquier asignación anterior de esta manga (siempre 1 sola)
+    await supabase.from("heat_assignments").delete().eq("heat_id", heatId);
 
     const { error } = await supabase
       .from("heat_assignments")
-      .upsert(assignments, { onConflict: "heat_id,team_id" });
+      .insert({ heat_id: heatId, team_id: rowForHeat.team_id, lane: null });
 
     if (error) return { error: error.message };
   }
 
   revalidatePath("/admin/fixtures");
+  revalidatePath("/admin/heats");
   return { success: true };
 }
 

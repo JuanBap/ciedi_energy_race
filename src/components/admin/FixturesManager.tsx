@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -82,10 +84,39 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
 const LANES: Lane[] = ["C2", "C4", "C6"];
 
 export default function FixturesManager({ teams, timers, velocityHeats, versatilityHeats }: Props) {
+  const router = useRouter();
+  const [connected, setConnected] = useState(false);
+
+  // Realtime: debounced refresh para que los cambios se reflejen
+  // automáticamente sin saturar al servidor con muchos refreshes.
+  const debouncedRefresh = useCallback(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    return () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => router.refresh(), 400);
+    };
+  }, [router])();
+
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel("fixtures-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "heats" }, debouncedRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "heat_assignments" }, debouncedRefresh)
+      .subscribe((s) => setConnected(s === "SUBSCRIBED"));
+    return () => { supabase.removeChannel(channel); };
+  }, [debouncedRefresh]);
+
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-4 text-sm text-zinc-400">
-        <p className="font-medium text-zinc-300 mb-1">Cómo funciona</p>
+        <div className="flex items-center justify-between mb-1">
+          <p className="font-medium text-zinc-300">Cómo funciona</p>
+          <div className="flex items-center gap-1 text-xs text-zinc-500">
+            <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400" : "bg-zinc-600"}`} />
+            <span>{connected ? "Sincronizado" : "Conectando…"}</span>
+          </div>
+        </div>
         <ul className="list-disc list-inside space-y-0.5">
           <li><span className="text-white">Velocidad</span> — hasta 3 equipos en paralelo (uno por carril). Los carriles pueden quedar vacíos.</li>
           <li><span className="text-white">Versatilidad</span> — un equipo por manga, en orden de salida.</li>
@@ -140,6 +171,16 @@ function VelocityFixture({
   function removeRow(i: number) { setRows(rows.filter((_, idx) => idx !== i)); }
 
   async function handleSaveNewFixture() {
+    // Validación cliente: detectar duplicados de equipo en una misma manga
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const used = [r.c2, r.c4, r.c6].filter(Boolean);
+      if (new Set(used).size !== used.length) {
+        toast.error(`Manga ${startHeatNum + i}: el mismo equipo está asignado a dos carriles. Cada equipo solo puede correr en un carril por manga.`);
+        return;
+      }
+    }
+
     const flat: { team_id: string; heat_number: number; lane: Lane }[] = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
