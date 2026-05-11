@@ -175,6 +175,20 @@ export default function ScoresView({
 
   const isFinished = event?.status === "finished";
 
+  // Mapear el step global (0-6) al step de revelación de cada categoría (0-3)
+  const pushcartsRevealStep = Math.min(podiumStep, 3);
+  const hpvsRevealStep = Math.max(0, podiumStep - 3);
+  const currentRevealStep = tab === "pushcarts" ? pushcartsRevealStep : hpvsRevealStep;
+
+  // Auto-cambiar de tab según el step del admin:
+  // - step 1-3: enfocar pushcarts (revelando)
+  // - step 4-6: enfocar HPV's (revelando)
+  useEffect(() => {
+    if (!published) return;
+    if (podiumStep >= 1 && podiumStep <= 3) setTab("pushcarts");
+    else if (podiumStep >= 4 && podiumStep <= 6) setTab("hpvs");
+  }, [podiumStep, published]);
+
   return (
     <main className="min-h-screen bg-black text-white">
       <header className="bg-zinc-900 border-b border-zinc-800 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between sticky top-0 z-10">
@@ -198,19 +212,38 @@ export default function ScoresView({
       ) : (
         <>
           <section className="px-4 sm:px-6 py-4 border-b border-zinc-800 bg-zinc-950 sticky top-[64px] sm:top-[72px] z-[9] backdrop-blur">
-            <div className="flex gap-2">
-              <CategoryChip active={tab === "pushcarts"} onClick={() => setTab("pushcarts")}>Pushcarts</CategoryChip>
-              <CategoryChip active={tab === "hpvs"} onClick={() => setTab("hpvs")}>HPV&apos;s</CategoryChip>
+            <div className="flex gap-2 items-center">
+              <CategoryChip active={tab === "pushcarts"} onClick={() => setTab("pushcarts")}>
+                Pushcarts
+                {pushcartsRevealStep > 0 && pushcartsRevealStep < 3 && (
+                  <span className="ml-1.5 text-[10px] opacity-70">({pushcartsRevealStep}/3)</span>
+                )}
+              </CategoryChip>
+              <CategoryChip
+                active={tab === "hpvs"}
+                onClick={() => setTab("hpvs")}
+                disabled={hpvsRevealStep === 0 && podiumStep < 4}
+              >
+                HPV&apos;s
+                {hpvsRevealStep > 0 && hpvsRevealStep < 3 && (
+                  <span className="ml-1.5 text-[10px] opacity-70">({hpvsRevealStep}/3)</span>
+                )}
+                {podiumStep < 4 && <span className="ml-1.5 text-[10px] opacity-50">🔒</span>}
+              </CategoryChip>
             </div>
           </section>
 
-          {/* Podio con flip cards reveladas progresivamente */}
+          {/* Podio con flip cards reveladas progresivamente (por categoría) */}
           <section className="px-4 sm:px-6 py-8">
-            <FlipPodium rankings={tabRankings.slice(0, 3)} revealStep={podiumStep} />
+            <FlipPodium
+              rankings={tabRankings.slice(0, 3)}
+              revealStep={currentRevealStep}
+              categoryLabel={tab === "pushcarts" ? "Pushcarts" : "HPV's"}
+            />
           </section>
 
-          {/* Tabla detallada solo visible cuando el podio entero está revelado */}
-          {podiumStep >= 3 && (
+          {/* Tabla detallada visible cuando el podio de ESA categoría está revelado */}
+          {currentRevealStep >= 3 && (
             <section className="px-4 sm:px-6 pb-8 animate-in fade-in duration-700">
               <ScoresTable
                 rankings={tabRankings}
@@ -222,7 +255,7 @@ export default function ScoresView({
             </section>
           )}
 
-          {isFinished && podiumStep >= 3 && (
+          {isFinished && podiumStep >= 6 && (
             <section className="px-4 sm:px-6 pb-8">
               <div className="rounded-xl border border-yellow-700/50 bg-yellow-900/10 p-4 text-center">
                 <p className="text-yellow-400 text-xs tracking-widest uppercase font-bold">Competencia Finalizada</p>
@@ -267,7 +300,7 @@ function SuspenseScreen() {
 
 // ── Podio con flip cards ─────────────────────────────────────────────────────
 
-function FlipPodium({ rankings, revealStep }: { rankings: EnrichedRow[]; revealStep: number }) {
+function FlipPodium({ rankings, revealStep, categoryLabel }: { rankings: EnrichedRow[]; revealStep: number; categoryLabel: string }) {
   if (rankings.length === 0) {
     return (
       <p className="text-zinc-600 text-center py-8 uppercase tracking-widest text-sm">
@@ -295,8 +328,11 @@ function FlipPodium({ rankings, revealStep }: { rankings: EnrichedRow[]; revealS
 
   return (
     <div className="max-w-4xl mx-auto">
-      <p className="text-center text-yellow-400 text-xs sm:text-sm uppercase tracking-widest font-bold mb-6 sm:mb-10">
+      <p className="text-center text-yellow-400 text-xs sm:text-sm uppercase tracking-widest font-bold mb-1">
         Podio
+      </p>
+      <p className="text-center text-white text-2xl sm:text-3xl font-black mb-6 sm:mb-10">
+        {categoryLabel}
       </p>
       <div className="grid grid-cols-3 gap-3 sm:gap-6 items-end">
         {/* 2° puesto - izquierda */}
@@ -415,13 +451,16 @@ function FlipCard({
 }
 
 function CategoryChip({
-  active, onClick, children,
-}: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  active, onClick, children, disabled = false,
+}: { active: boolean; onClick: () => void; children: React.ReactNode; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={`px-4 py-1.5 rounded-full text-sm font-bold transition-all ${
-        active ? "bg-yellow-400 text-black" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+        active ? "bg-yellow-400 text-black" :
+        disabled ? "bg-zinc-900 text-zinc-600 cursor-not-allowed opacity-60" :
+        "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
       }`}
     >
       {children}

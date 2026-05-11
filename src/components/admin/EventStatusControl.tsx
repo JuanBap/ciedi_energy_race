@@ -17,7 +17,15 @@ interface Props {
   podiumStep: number;
 }
 
-const PODIUM_LABELS = ["Revelar 3° puesto", "Revelar 2° puesto", "Revelar 1° puesto"];
+// Etiquetas de los 6 pasos de revelación
+const PODIUM_LABELS = [
+  "Revelar 3° Pushcarts",
+  "Revelar 2° Pushcarts",
+  "Revelar 1° Pushcarts 🏆",
+  "Revelar 3° HPV's",
+  "Revelar 2° HPV's",
+  "Revelar 1° HPV's 🏆",
+];
 
 export default function EventStatusControl({ currentStatus, resultsPublished, podiumStep }: Props) {
   const [loading, setLoading] = useState(false);
@@ -104,13 +112,25 @@ export default function EventStatusControl({ currentStatus, resultsPublished, po
         </p>
         <p className="text-zinc-400 text-xs mb-3">
           {!resultsPublished
-            ? "El público ve un mensaje de suspense. Cuando publiques, las tarjetas del podio aparecen de espaldas, listas para revelar."
+            ? "El público ve un mensaje de suspense. Cuando publiques, comienzas con el podio de Pushcarts."
             : podiumStep === 0
-            ? "Resultados publicados. Las 3 tarjetas están de espaldas. Comienza revelando el 3er puesto."
+            ? "Resultados publicados. Las tarjetas de Pushcarts están de espaldas. Comienza revelando el 3er puesto."
             : podiumStep < 3
-            ? `Revelaste ${podiumStep} de 3 puestos. Continúa con el siguiente.`
-            : "Podio completo revelado. La tabla de puntajes también es visible."}
+            ? `Pushcarts: ${podiumStep} de 3 puestos revelados. Continúa.`
+            : podiumStep === 3
+            ? "🎉 Pushcarts completo. Ahora comienza con HPV's: revela el 3er puesto."
+            : podiumStep < 6
+            ? `HPV's: ${podiumStep - 3} de 3 puestos revelados. Continúa.`
+            : "🏆 Ambos podios revelados. Las tablas de puntajes ya son visibles."}
         </p>
+
+        {/* Indicador visual del progreso */}
+        {resultsPublished && (
+          <div className="flex items-center gap-4 mb-3 text-xs">
+            <CategoryProgress label="Pushcarts" current={Math.min(podiumStep, 3)} />
+            <CategoryProgress label="HPV's" current={Math.max(0, podiumStep - 3)} />
+          </div>
+        )}
 
         <div className="flex gap-2 flex-wrap">
           {!resultsPublished ? (
@@ -124,7 +144,7 @@ export default function EventStatusControl({ currentStatus, resultsPublished, po
             </Button>
           ) : (
             <>
-              {podiumStep < 3 && (
+              {podiumStep < 6 && (
                 <Button
                   size="sm"
                   disabled={loading}
@@ -158,6 +178,23 @@ export default function EventStatusControl({ currentStatus, resultsPublished, po
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function CategoryProgress({ label, current }: { label: string; current: number }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-zinc-400 font-medium">{label}:</span>
+      {[1, 2, 3].map((n) => (
+        <div
+          key={n}
+          className={`w-2 h-2 rounded-full ${
+            current >= n ? "bg-yellow-400" : "bg-zinc-700"
+          }`}
+        />
+      ))}
+      <span className="text-zinc-500 text-[10px] tabular-nums">{current}/3</span>
     </div>
   );
 }
