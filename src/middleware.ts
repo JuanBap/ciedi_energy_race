@@ -21,7 +21,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Rutas públicas
-  if (pathname === "/" || pathname === "/live" || pathname === "/login") {
+  if (pathname === "/" || pathname === "/live" || pathname === "/scores" || pathname === "/login") {
     return NextResponse.next();
   }
 
