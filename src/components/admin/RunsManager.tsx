@@ -158,7 +158,7 @@ function RunSection({
             <TableHeader>
               <TableRow className="border-zinc-700">
                 <TableHead className="text-zinc-400">Manga</TableHead>
-                {title === "Velocidad" && <TableHead className="text-zinc-400">Carril</TableHead>}
+                <TableHead className="text-zinc-400">Carril</TableHead>
                 <TableHead className="text-zinc-400">Equipo</TableHead>
                 <TableHead className="text-zinc-400">Tiempo</TableHead>
                 <TableHead className="text-zinc-400">Penalización</TableHead>
@@ -170,26 +170,16 @@ function RunSection({
               {runs.map((run) => {
                 const ha = run.heat_assignments;
                 const penaltyMs = run.has_penalty_velocity ? 10000 : 0;
-                const versatilityPenalty =
-                  (run.penalty_versatility_count_out +
-                    run.penalty_versatility_count_crash +
-                    run.penalty_versatility_count_cut) *
-                  5000;
-                const totalMs =
-                  run.time_ms != null
-                    ? run.time_ms + penaltyMs + versatilityPenalty
-                    : null;
+                const totalMs = run.time_ms != null ? run.time_ms + penaltyMs : null;
 
                 return (
                   <TableRow key={run.id} className="border-zinc-700">
                     <TableCell className="text-white font-mono">
                       M{ha?.heats?.heat_number}
                     </TableCell>
-                    {title === "Velocidad" && (
-                      <TableCell className="text-yellow-400 font-mono text-sm">
-                        {ha?.lane ?? "—"}
-                      </TableCell>
-                    )}
+                    <TableCell className="text-yellow-400 font-mono text-sm">
+                      {ha?.lane ?? "—"}
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         {ha?.teams && (
@@ -205,18 +195,9 @@ function RunSection({
                       {totalMs != null ? formatTimePrecise(totalMs) : "—"}
                     </TableCell>
                     <TableCell className="text-sm">
-                      {run.has_penalty_velocity && (
-                        <span className="text-red-400">+10s vel</span>
-                      )}
-                      {versatilityPenalty > 0 && (
-                        <span className="text-orange-400">
-                          +{versatilityPenalty / 1000}s
-                          ({run.penalty_versatility_count_out}S/
-                          {run.penalty_versatility_count_crash}C/
-                          {run.penalty_versatility_count_cut}T)
-                        </span>
-                      )}
-                      {!run.has_penalty_velocity && versatilityPenalty === 0 && (
+                      {run.has_penalty_velocity ? (
+                        <span className="text-red-400">+10s</span>
+                      ) : (
                         <span className="text-zinc-600">—</span>
                       )}
                     </TableCell>
@@ -338,18 +319,16 @@ function EditRunDialog({ run, onClose }: { run: Run | null; onClose: () => void 
               />
               <p className="text-zinc-500 text-xs">Ej: 01:23 para 1 minuto 23 segundos</p>
             </div>
-            {run.heat_assignments?.heats?.test_type === "velocity" && (
-              <div className="flex items-center gap-3">
-                <Checkbox
-                  id="penalty"
-                  checked={penalty}
-                  onCheckedChange={(v) => setPenalty(!!v)}
-                />
-                <label htmlFor="penalty" className="text-zinc-300 text-sm cursor-pointer">
-                  Penalización +10s (no frenó en zona / salió de pista)
-                </label>
-              </div>
-            )}
+            <div className="flex items-center gap-3">
+              <Checkbox
+                id="penalty"
+                checked={penalty}
+                onCheckedChange={(v) => setPenalty(!!v)}
+              />
+              <label htmlFor="penalty" className="text-zinc-300 text-sm cursor-pointer">
+                Penalización +10s
+              </label>
+            </div>
             {run.edited_at && (
               <p className="text-zinc-600 text-xs">
                 Última edición: {new Date(run.edited_at).toLocaleString("es-CO")}

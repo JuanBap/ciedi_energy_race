@@ -64,11 +64,8 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
   const [heats, setHeats] = useState<Heat[]>(initialHeats);
   const [running, setRunning] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
+  // Penalización +10s — toggle simple para AMBAS pruebas (velocidad y versatilidad)
   const [hasPenalty, setHasPenalty] = useState(false);
-  // Penalizaciones de versatilidad: 3 contadores acumulativos de +5s
-  const [penaltyOut, setPenaltyOut] = useState(0);
-  const [penaltyCrash, setPenaltyCrash] = useState(0);
-  const [penaltyCut, setPenaltyCut] = useState(0);
   const [activeHaId, setActiveHaId] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -131,9 +128,6 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
       setActiveHaId(activeAssignment.id);
       setElapsedMs(0);
       setHasPenalty(false);
-      setPenaltyOut(0);
-      setPenaltyCrash(0);
-      setPenaltyCut(0);
     } else if (!activeAssignment && activeHaId) {
       setActiveHaId(null);
     }
@@ -150,9 +144,6 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
       setSubmitted(false);
       setElapsedMs(0);
       setHasPenalty(false);
-      setPenaltyOut(0);
-      setPenaltyCrash(0);
-      setPenaltyCut(0);
       toast.info("El admin solicitó repetir esta manga. Listo para nuevo tiempo.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -212,9 +203,6 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
     setElapsedMs(0);
     setRunning(true);
     setHasPenalty(false);
-    setPenaltyOut(0);
-    setPenaltyCrash(0);
-    setPenaltyCut(0);
     localStorage.setItem(LS_KEY, JSON.stringify({ t_start: Date.now(), ha_id: activeAssignment.id }));
     rafRef.current = requestAnimationFrame(tick);
   }
@@ -231,19 +219,17 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
   const handleSubmit = useCallback(async () => {
     if (running || !activeAssignment) return;
     const ms = elapsedMs;
-    const heat = heats.find((h) => h.heat_assignments.some((ha) => ha.id === activeAssignment.id));
-    const isVersatility = heat?.test_type === "versatility";
-
     setSubmitting(true);
     const supabase = createClient();
     const existingRun = activeAssignment.runs?.[0];
 
+    // Mismo payload para velocidad y versatilidad — penalización +10s simple
     const payload = {
       time_ms: Math.round(ms),
-      has_penalty_velocity: isVersatility ? false : hasPenalty,
-      penalty_versatility_count_out: isVersatility ? penaltyOut : 0,
-      penalty_versatility_count_crash: isVersatility ? penaltyCrash : 0,
-      penalty_versatility_count_cut: isVersatility ? penaltyCut : 0,
+      has_penalty_velocity: hasPenalty,
+      penalty_versatility_count_out: 0,
+      penalty_versatility_count_crash: 0,
+      penalty_versatility_count_cut: 0,
       status: "recorded",
       recorded_by: profile.id,
       recorded_at: new Date().toISOString(),
@@ -268,23 +254,17 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
       setConfirmOpen(false);
     }
     setSubmitting(false);
-  }, [running, activeAssignment, elapsedMs, hasPenalty, penaltyOut, penaltyCrash, penaltyCut, profile.id, heats]);
+  }, [running, activeAssignment, elapsedMs, hasPenalty, profile.id]);
 
   function handleNext() {
     setSubmitted(false);
     setElapsedMs(0);
     setHasPenalty(false);
-    setPenaltyOut(0);
-    setPenaltyCrash(0);
-    setPenaltyCut(0);
-    setActiveHaId(null); // el effect de sincronización elegirá la siguiente
+    setActiveHaId(null);
   }
 
-  // Total con penalizaciones: +10s velocidad O (out+crash+cut)*5s versatilidad
-  const versatilityPenaltySec = penaltyOut + penaltyCrash + penaltyCut;
-  const isVersatility = activeHeat?.test_type === "versatility";
-  const totalWithPenalty = elapsedMs
-    + (isVersatility ? versatilityPenaltySec * 5000 : (hasPenalty ? 10000 : 0));
+  // Total con penalización: +10s para AMBAS pruebas (toggle único)
+  const totalWithPenalty = elapsedMs + (hasPenalty ? 10000 : 0);
 
   // El "lane" visible es el del heat activo si existe, si no, del próximo
   const currentLane = (activeAssignment?.lane ?? null) as Lane | null;
@@ -361,19 +341,10 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
             submitting={submitting}
             elapsedMs={elapsedMs}
             hasPenalty={hasPenalty}
-            penaltyOut={penaltyOut}
-            penaltyCrash={penaltyCrash}
-            penaltyCut={penaltyCut}
             totalWithPenalty={totalWithPenalty}
             onStart={handleStart}
             onStop={handleStop}
             onTogglePenalty={() => setHasPenalty((p) => !p)}
-            onIncOut={() => setPenaltyOut((p) => p + 1)}
-            onDecOut={() => setPenaltyOut((p) => Math.max(0, p - 1))}
-            onIncCrash={() => setPenaltyCrash((p) => p + 1)}
-            onDecCrash={() => setPenaltyCrash((p) => Math.max(0, p - 1))}
-            onIncCut={() => setPenaltyCut((p) => p + 1)}
-            onDecCut={() => setPenaltyCut((p) => Math.max(0, p - 1))}
             onOpenConfirm={() => setConfirmOpen(true)}
             onNext={handleNext}
             upcomingHeats={upcomingHeats}
@@ -397,16 +368,8 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
             <div className="font-mono text-4xl sm:text-5xl font-bold tabular-nums text-yellow-400 leading-none">
               {formatTimePrecise(totalWithPenalty)}
             </div>
-            {hasPenalty && !isVersatility && (
+            {hasPenalty && (
               <p className="text-red-400 text-xs sm:text-sm font-bold">incluye +10s de penalización</p>
-            )}
-            {isVersatility && versatilityPenaltySec > 0 && (
-              <div className="text-red-400 text-xs sm:text-sm font-bold space-y-0.5">
-                <p>+{versatilityPenaltySec * 5}s de penalización ({versatilityPenaltySec} × 5s)</p>
-                <p className="text-zinc-500 text-[10px] font-normal">
-                  Salió: {penaltyOut} · Chocó: {penaltyCrash} · Cortó: {penaltyCut}
-                </p>
-              </div>
             )}
           </div>
           <div className="grid grid-cols-2 gap-3 pt-1 sm:pt-2">
@@ -515,11 +478,9 @@ function ActiveRunner({
   assignment, heat, testType, lane,
   running, submitted, submitting,
   elapsedMs, hasPenalty,
-  penaltyOut, penaltyCrash, penaltyCut,
   totalWithPenalty,
   onStart, onStop,
   onTogglePenalty,
-  onIncOut, onDecOut, onIncCrash, onDecCrash, onIncCut, onDecCut,
   onOpenConfirm, onNext,
   upcomingHeats, completedCount, totalCount,
 }: {
@@ -532,27 +493,16 @@ function ActiveRunner({
   submitting: boolean;
   elapsedMs: number;
   hasPenalty: boolean;
-  penaltyOut: number;
-  penaltyCrash: number;
-  penaltyCut: number;
   totalWithPenalty: number;
   onStart: () => void;
   onStop: () => void;
   onTogglePenalty: () => void;
-  onIncOut: () => void;
-  onDecOut: () => void;
-  onIncCrash: () => void;
-  onDecCrash: () => void;
-  onIncCut: () => void;
-  onDecCut: () => void;
   onOpenConfirm: () => void;
   onNext: () => void;
   upcomingHeats: Heat[];
   completedCount: number;
   totalCount: number;
 }) {
-  const versPenaltySec = penaltyOut + penaltyCrash + penaltyCut;
-  const isVersatility = testType === "versatility";
   return (
     <>
       <div className="text-center w-full max-w-sm">
@@ -583,13 +533,8 @@ function ActiveRunner({
         >
           {formatTimePrecise(running ? elapsedMs : totalWithPenalty)}
         </div>
-        {hasPenalty && !isVersatility && (
+        {hasPenalty && (
           <p className="text-red-400 font-bold text-base sm:text-lg mt-2">+10 SEG PENALIZACIÓN</p>
-        )}
-        {isVersatility && versPenaltySec > 0 && (
-          <p className="text-red-400 font-bold text-base sm:text-lg mt-2">
-            +{versPenaltySec * 5} SEG PENALIZACIÓN ({versPenaltySec} faltas)
-          </p>
         )}
       </div>
 
@@ -612,7 +557,8 @@ function ActiveRunner({
             </Button>
           )}
 
-          {testType === "velocity" && !running && (
+          {/* Penalización +10s — toggle único para velocidad Y versatilidad */}
+          {!running && (
             <Button
               onClick={onTogglePenalty}
               className={`w-full h-14 sm:h-16 text-base sm:text-xl font-bold rounded-2xl active:scale-95 transition-all ${
@@ -623,17 +569,6 @@ function ActiveRunner({
             >
               {hasPenalty ? "✓ +10s ACTIVADO" : "+10s PENALIZACIÓN"}
             </Button>
-          )}
-
-          {isVersatility && (
-            <div className="w-full space-y-2">
-              <p className="text-zinc-400 text-xs uppercase tracking-wider text-center font-medium">
-                Penalizaciones (+5s c/u)
-              </p>
-              <PenaltyCounter label="Salió de pista" emoji="🚧" value={penaltyOut} onInc={onIncOut} onDec={onDecOut} />
-              <PenaltyCounter label="Chocó obstáculo" emoji="💥" value={penaltyCrash} onInc={onIncCrash} onDec={onDecCrash} />
-              <PenaltyCounter label="Cortó trayectoria" emoji="✂️" value={penaltyCut} onInc={onIncCut} onDec={onDecCut} />
-            </div>
           )}
 
           {elapsedMs > 0 && !running && (
@@ -680,43 +615,4 @@ function ActiveRunner({
   );
 }
 
-
-// ── Contador de penalización (versatilidad) ─────────────────────────────────
-
-function PenaltyCounter({
-  label, emoji, value, onInc, onDec,
-}: {
-  label: string;
-  emoji: string;
-  value: number;
-  onInc: () => void;
-  onDec: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-2 bg-zinc-900 border-2 border-zinc-700 rounded-2xl p-2">
-      <div className="flex-1 min-w-0">
-        <p className="text-zinc-300 text-sm font-medium flex items-center gap-1.5">
-          <span className="text-base">{emoji}</span>
-          <span className="truncate">{label}</span>
-        </p>
-      </div>
-      <button
-        onClick={onDec}
-        disabled={value === 0}
-        className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed font-bold text-xl active:scale-95 transition-all"
-      >
-        −
-      </button>
-      <div className={`w-10 sm:w-12 text-center font-mono tabular-nums text-2xl sm:text-3xl font-black ${value > 0 ? "text-red-400" : "text-zinc-600"}`}>
-        {value}
-      </div>
-      <button
-        onClick={onInc}
-        className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xl active:scale-95 transition-all"
-      >
-        +
-      </button>
-    </div>
-  );
-}
 
