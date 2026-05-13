@@ -251,18 +251,33 @@ export async function assignLane(
     await supabase.from("heat_assignments").delete().eq("id", existing.id);
   }
 
-  const { error } = await supabase.from("heat_assignments").insert({
-    heat_id: heatId,
-    team_id: teamId,
-    lane,
-    timer_user_id: timerUserId,
-    no_show: noShow,
-  });
+  const { data: inserted, error } = await supabase
+    .from("heat_assignments")
+    .insert({
+      heat_id: heatId,
+      team_id: teamId,
+      lane,
+      timer_user_id: timerUserId,
+      no_show: noShow,
+    })
+    .select("id")
+    .single();
 
   if (error) return { error: error.message };
 
+  // Si se marca como "no se presentó" desde el inicio, creamos también un run
+  // pendiente para que aparezca en /admin/runs y el admin pueda asignarle un
+  // tiempo (por ejemplo, peor + 10s).
+  if (noShow && inserted) {
+    await supabase.from("runs").insert({
+      heat_assignment_id: inserted.id,
+      status: "pending",
+    });
+  }
+
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/admin/runs");
   revalidatePath("/live");
   return { success: true };
 }
@@ -278,6 +293,22 @@ export async function setNoShow(heatAssignmentId: string, noShow: boolean) {
     .eq("id", heatAssignmentId);
 
   if (error) return { error: error.message };
+
+  // Si ahora se marca como no_show y aún no existe un run para esta asignación,
+  // crear uno pendiente para que aparezca en /admin/runs.
+  if (noShow) {
+    const { data: existingRun } = await supabase
+      .from("runs")
+      .select("id")
+      .eq("heat_assignment_id", heatAssignmentId)
+      .maybeSingle();
+    if (!existingRun) {
+      await supabase.from("runs").insert({
+        heat_assignment_id: heatAssignmentId,
+        status: "pending",
+      });
+    }
+  }
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");

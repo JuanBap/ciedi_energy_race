@@ -94,12 +94,13 @@ await page.screenshot({ path: "/tmp/fixtures-no-show.png", fullPage: true });
 
 // === TEST 2: /admin/runs muestra badge no_show ===
 console.log("\n=== TEST 2: /admin/runs muestra badge ===");
-// Crear un run pending para el ha que marcamos no_show
+// El run pending debió crearse automáticamente al marcar no_show
 const { data: noShowHa } = await sb.from("heat_assignments").select("id").eq("heat_id", h2.id).eq("no_show", true).single();
-if (noShowHa) {
-  await sb.from("runs").insert({ heat_assignment_id: noShowHa.id });
-  await page.waitForTimeout(500);
-}
+const { data: autoRun } = noShowHa
+  ? await sb.from("runs").select("id").eq("heat_assignment_id", noShowHa.id).maybeSingle()
+  : { data: null };
+console.log(`  Run auto-creado para no_show: ${autoRun ? "✓" : "✗"}`);
+tests.push({ name: "Run pending creado automáticamente", pass: !!autoRun });
 
 await page.goto("http://localhost:3000/admin/runs", { waitUntil: "networkidle" });
 await page.waitForTimeout(2000);
