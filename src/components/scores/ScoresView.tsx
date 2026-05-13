@@ -175,19 +175,32 @@ export default function ScoresView({
 
   const isFinished = event?.status === "finished";
 
-  // Mapear el step global (0-6) al step de revelación de cada categoría (0-3)
-  const pushcartsRevealStep = Math.min(podiumStep, 3);
-  const hpvsRevealStep = Math.max(0, podiumStep - 3);
+  // Mapear el step global (0-8) al step de revelación de cada categoría (0-4)
+  //   Pushcarts: steps 1-4 (3°, 2°, 1°, mejor tiempo)
+  //   HPV's:     steps 5-8 (3°, 2°, 1°, mejor tiempo)
+  const pushcartsRevealStep = Math.min(podiumStep, 4);
+  const hpvsRevealStep = Math.max(0, podiumStep - 4);
   const currentRevealStep = tab === "pushcarts" ? pushcartsRevealStep : hpvsRevealStep;
 
-  // Auto-cambiar de tab según el step del admin:
-  // - step 1-3: enfocar pushcarts (revelando)
-  // - step 4-6: enfocar HPV's (revelando)
+  // Auto-cambiar de tab según el step del admin
   useEffect(() => {
     if (!published) return;
-    if (podiumStep >= 1 && podiumStep <= 3) setTab("pushcarts");
-    else if (podiumStep >= 4 && podiumStep <= 6) setTab("hpvs");
+    if (podiumStep >= 1 && podiumStep <= 4) setTab("pushcarts");
+    else if (podiumStep >= 5 && podiumStep <= 8) setTab("hpvs");
   }, [podiumStep, published]);
+
+  // Mejor tiempo total (suma velocidad + versatilidad) por categoría
+  const bestTimeRows = useMemo(() => {
+    const candidates = rankings
+      .filter((r) => r.category_slug === tab)
+      .filter((r) => r.time_velocity_total !== null && r.time_versatility_total !== null)
+      .map((r) => ({
+        ...r,
+        combinedMs: (r.time_velocity_total ?? 0) + (r.time_versatility_total ?? 0),
+      }))
+      .sort((a, b) => a.combinedMs - b.combinedMs);
+    return candidates[0] ?? null;
+  }, [rankings, tab]);
 
   return (
     <main className="min-h-screen bg-black text-white">
@@ -215,20 +228,20 @@ export default function ScoresView({
             <div className="flex gap-2 items-center">
               <CategoryChip active={tab === "pushcarts"} onClick={() => setTab("pushcarts")}>
                 Pushcarts
-                {pushcartsRevealStep > 0 && pushcartsRevealStep < 3 && (
-                  <span className="ml-1.5 text-[10px] opacity-70">({pushcartsRevealStep}/3)</span>
+                {pushcartsRevealStep > 0 && pushcartsRevealStep < 4 && (
+                  <span className="ml-1.5 text-[10px] opacity-70">({pushcartsRevealStep}/4)</span>
                 )}
               </CategoryChip>
               <CategoryChip
                 active={tab === "hpvs"}
                 onClick={() => setTab("hpvs")}
-                disabled={hpvsRevealStep === 0 && podiumStep < 4}
+                disabled={hpvsRevealStep === 0 && podiumStep < 5}
               >
                 HPV&apos;s
-                {hpvsRevealStep > 0 && hpvsRevealStep < 3 && (
-                  <span className="ml-1.5 text-[10px] opacity-70">({hpvsRevealStep}/3)</span>
+                {hpvsRevealStep > 0 && hpvsRevealStep < 4 && (
+                  <span className="ml-1.5 text-[10px] opacity-70">({hpvsRevealStep}/4)</span>
                 )}
-                {podiumStep < 4 && <span className="ml-1.5 text-[10px] opacity-50">🔒</span>}
+                {podiumStep < 5 && <span className="ml-1.5 text-[10px] opacity-50">🔒</span>}
               </CategoryChip>
             </div>
           </section>
@@ -241,6 +254,17 @@ export default function ScoresView({
               categoryLabel={tab === "pushcarts" ? "Pushcarts" : "HPV's"}
             />
           </section>
+
+          {/* Tarjeta de "mejor tiempo en pista" — se revela DESPUÉS del podio (step 4) */}
+          {currentRevealStep >= 4 && bestTimeRows && (
+            <section className="px-4 sm:px-6 pb-8">
+              <BestTimeCard
+                team={bestTimeRows}
+                combinedMs={bestTimeRows.combinedMs}
+                categoryLabel={tab === "pushcarts" ? "Pushcarts" : "HPV's"}
+              />
+            </section>
+          )}
 
           {/* Tabla detallada visible cuando el podio de ESA categoría está revelado */}
           {currentRevealStep >= 3 && (
@@ -255,7 +279,7 @@ export default function ScoresView({
             </section>
           )}
 
-          {isFinished && podiumStep >= 6 && (
+          {isFinished && podiumStep >= 8 && (
             <section className="px-4 sm:px-6 pb-8">
               <div className="rounded-xl border border-yellow-700/50 bg-yellow-900/10 p-4 text-center">
                 <p className="text-yellow-400 text-xs tracking-widest uppercase font-bold">Competencia Finalizada</p>
@@ -268,6 +292,93 @@ export default function ScoresView({
         </>
       )}
     </main>
+  );
+}
+
+// ── Tarjeta "Mejor tiempo en pista" ──────────────────────────────────────────
+
+function BestTimeCard({
+  team, combinedMs, categoryLabel,
+}: {
+  team: RankingRow;
+  combinedMs: number;
+  categoryLabel: string;
+}) {
+  return (
+    <div className="max-w-2xl mx-auto animate-in zoom-in-95 fade-in duration-700">
+      <div
+        className="relative rounded-3xl border-2 overflow-hidden"
+        style={{
+          borderColor: team.color_hex,
+          background: `linear-gradient(135deg, ${team.color_hex}55 0%, ${team.color_hex}11 50%, #09090b 100%)`,
+        }}
+      >
+        {/* Brillo decorativo */}
+        <div
+          className="absolute inset-0 opacity-30 pointer-events-none"
+          style={{
+            background: `radial-gradient(circle at 20% 30%, ${team.color_hex}66 0%, transparent 50%)`,
+          }}
+        />
+
+        <div className="relative p-6 sm:p-8 flex flex-col items-center text-center gap-3">
+          {/* Etiqueta superior */}
+          <div className="flex items-center gap-2">
+            <span className="text-3xl sm:text-4xl animate-pulse">⚡</span>
+            <p className="text-cyan-400 text-xs sm:text-sm uppercase tracking-[0.3em] font-black">
+              Mejor tiempo en pista
+            </p>
+            <span className="text-3xl sm:text-4xl animate-pulse">⚡</span>
+          </div>
+
+          <p className="text-zinc-400 text-xs sm:text-sm uppercase tracking-widest">
+            {categoryLabel}
+          </p>
+
+          {/* Identidad del equipo */}
+          <div className="mt-2 flex items-center gap-4">
+            <div
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center font-black text-3xl sm:text-4xl shrink-0 shadow-lg"
+              style={{ backgroundColor: team.color_hex, color: "#000" }}
+            >
+              {team.team_name.charAt(0).toUpperCase()}
+            </div>
+            <div className="text-left min-w-0">
+              <p className="text-white text-2xl sm:text-3xl font-black leading-tight truncate">
+                {team.team_name}
+              </p>
+              <p className="text-zinc-400 text-sm truncate">{team.school}</p>
+            </div>
+          </div>
+
+          {/* Tiempo total */}
+          <div className="mt-3">
+            <p className="text-zinc-500 text-xs uppercase tracking-widest mb-1">
+              Tiempo total (velocidad + versatilidad)
+            </p>
+            <p className="font-mono text-5xl sm:text-6xl font-black tabular-nums text-cyan-400 leading-none">
+              {formatTimePrecise(combinedMs)}
+            </p>
+          </div>
+
+          {/* Desglose */}
+          <div className="mt-2 flex gap-6 text-xs sm:text-sm">
+            <div>
+              <span className="text-zinc-500">Velocidad: </span>
+              <span className="font-mono text-zinc-300 tabular-nums">
+                {team.time_velocity_total !== null ? formatTimePrecise(team.time_velocity_total) : "—"}
+              </span>
+            </div>
+            <div>
+              <span className="text-zinc-500">Versatilidad: </span>
+              <span className="font-mono text-zinc-300 tabular-nums">
+                {team.time_versatility_total !== null ? formatTimePrecise(team.time_versatility_total) : "—"}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -87,7 +87,9 @@ export async function hideResults() {
 }
 
 // Revelar siguiente tarjeta del podio.
-// Pasos: 0=oculto / 1-3=Pushcarts (3°,2°,1°) / 4-6=HPV's (3°,2°,1°)
+// Pasos: 0=oculto
+//        1-4=Pushcarts (3°, 2°, 1°, mejor tiempo)
+//        5-8=HPV's     (3°, 2°, 1°, mejor tiempo)
 export async function revealNextPodium() {
   await requireAdmin();
   const supabase = await createClient();
@@ -97,7 +99,7 @@ export async function revealNextPodium() {
     .eq("id", EVENT_ID)
     .single();
   const current = event?.podium_reveal_step ?? 0;
-  const next = Math.min(current + 1, 6);
+  const next = Math.min(current + 1, 8);
   const { error } = await supabase
     .from("events")
     .update({ podium_reveal_step: next, results_published: true })

@@ -17,14 +17,16 @@ interface Props {
   podiumStep: number;
 }
 
-// Etiquetas de los 6 pasos de revelación
+// Etiquetas de los 8 pasos de revelación
 const PODIUM_LABELS = [
   "Revelar 3° Pushcarts",
   "Revelar 2° Pushcarts",
   "Revelar 1° Pushcarts 🏆",
+  "⚡ Revelar mejor tiempo Pushcarts",
   "Revelar 3° HPV's",
   "Revelar 2° HPV's",
   "Revelar 1° HPV's 🏆",
+  "⚡ Revelar mejor tiempo HPV's",
 ];
 
 export default function EventStatusControl({ currentStatus, resultsPublished, podiumStep }: Props) {
@@ -118,17 +120,21 @@ export default function EventStatusControl({ currentStatus, resultsPublished, po
             : podiumStep < 3
             ? `Pushcarts: ${podiumStep} de 3 puestos revelados. Continúa.`
             : podiumStep === 3
-            ? "🎉 Pushcarts completo. Ahora comienza con HPV's: revela el 3er puesto."
-            : podiumStep < 6
-            ? `HPV's: ${podiumStep - 3} de 3 puestos revelados. Continúa.`
-            : "🏆 Ambos podios revelados. Las tablas de puntajes ya son visibles."}
+            ? "🎉 Pushcarts podio completo. Ahora revela el mejor tiempo en pista de la categoría."
+            : podiumStep === 4
+            ? "⚡ Mejor tiempo Pushcarts revelado. Comienza con HPV's: revela el 3er puesto."
+            : podiumStep < 7
+            ? `HPV's: ${podiumStep - 4} de 3 puestos revelados. Continúa.`
+            : podiumStep === 7
+            ? "🎉 HPV's podio completo. Finaliza revelando el mejor tiempo en pista."
+            : "🏆 Todo revelado. Podios y mejores tiempos visibles."}
         </p>
 
-        {/* Indicador visual del progreso */}
+        {/* Indicador visual del progreso (3 puestos + 1 mejor tiempo por categoría) */}
         {resultsPublished && (
           <div className="flex items-center gap-4 mb-3 text-xs">
-            <CategoryProgress label="Pushcarts" current={Math.min(podiumStep, 3)} />
-            <CategoryProgress label="HPV's" current={Math.max(0, podiumStep - 3)} />
+            <CategoryProgress label="Pushcarts" current={Math.min(podiumStep, 4)} />
+            <CategoryProgress label="HPV's" current={Math.max(0, podiumStep - 4)} />
           </div>
         )}
 
@@ -144,7 +150,7 @@ export default function EventStatusControl({ currentStatus, resultsPublished, po
             </Button>
           ) : (
             <>
-              {podiumStep < 6 && (
+              {podiumStep < 8 && (
                 <Button
                   size="sm"
                   disabled={loading}
@@ -183,6 +189,7 @@ export default function EventStatusControl({ currentStatus, resultsPublished, po
 }
 
 function CategoryProgress({ label, current }: { label: string; current: number }) {
+  // 4 puntos: 3 puestos del podio + 1 mejor tiempo
   return (
     <div className="flex items-center gap-1.5">
       <span className="text-zinc-400 font-medium">{label}:</span>
@@ -194,7 +201,13 @@ function CategoryProgress({ label, current }: { label: string; current: number }
           }`}
         />
       ))}
-      <span className="text-zinc-500 text-[10px] tabular-nums">{current}/3</span>
+      {/* Punto extra para "mejor tiempo" (cyan para diferenciar) */}
+      <div
+        className={`w-2 h-2 rounded-full ${
+          current >= 4 ? "bg-cyan-400" : "bg-zinc-700"
+        }`}
+      />
+      <span className="text-zinc-500 text-[10px] tabular-nums">{current}/4</span>
     </div>
   );
 }
