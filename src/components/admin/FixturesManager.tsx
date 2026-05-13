@@ -33,6 +33,7 @@ interface TimerUser {
   email: string;
   full_name: string | null;
   role: string;
+  preferred_lane: string | null;
 }
 
 interface HeatTeam {
@@ -54,6 +55,7 @@ interface HeatAssignment {
   team_id: string;
   lane: string | null;
   timer_user_id: string | null;
+  no_show: boolean;
   teams: HeatTeam | null;
   timer: { id: string; full_name: string | null; email: string } | null;
   runs: Run[];
@@ -430,9 +432,15 @@ function LaneCell({
           <p className="text-zinc-500 text-xs truncate">{ha.teams?.school}</p>
         </div>
       </div>
-      <p className={`text-xs truncate ${timerLabel ? "text-blue-400" : "text-zinc-600 italic"}`}>
-        {timerLabel ? `👤 ${timerLabel}` : "sin cronometrista"}
-      </p>
+      {ha.no_show ? (
+        <span className="inline-block bg-red-900/40 border border-red-700 text-red-300 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">
+          🚫 No se presentó
+        </span>
+      ) : (
+        <p className={`text-xs truncate ${timerLabel ? "text-blue-400" : "text-zinc-600 italic"}`}>
+          {timerLabel ? `👤 ${timerLabel}` : "sin cronometrista"}
+        </p>
+      )}
       <div className="flex gap-1 mt-1 flex-wrap">
         <button
           onClick={onAssign}
@@ -477,20 +485,31 @@ function AssignLaneModal({
 }) {
   const [teamId, setTeamId] = useState("");
   const [timerId, setTimerId] = useState<string>("");
+  const [noShow, setNoShow] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!cell) return;
     const existing = cell.heat.heat_assignments.find((a) => a.lane === cell.lane);
     setTeamId(existing?.team_id ?? "");
-    setTimerId(existing?.timer_user_id ?? "");
-  }, [cell]);
+    setNoShow(existing?.no_show ?? false);
+    // Default del cronometrista:
+    //   1. Si ya hay uno asignado → mantenerlo
+    //   2. Sino → buscar timer con preferred_lane = este lane
+    //   3. Sino → vacío
+    if (existing?.timer_user_id) {
+      setTimerId(existing.timer_user_id);
+    } else {
+      const preferred = timers.find((u) => u.preferred_lane === cell.lane);
+      setTimerId(preferred?.id ?? "");
+    }
+  }, [cell, timers]);
 
   async function handleSave() {
     if (!cell) return;
     if (!teamId || teamId === "none") { toast.error("Selecciona un equipo"); return; }
     setLoading(true);
-    const r = await assignLane(cell.heat.id, cell.lane, teamId, timerId || null);
+    const r = await assignLane(cell.heat.id, cell.lane, teamId, timerId || null, noShow);
     if (r?.error) toast.error(r.error);
     else { toast.success(`Carril ${cell.lane} actualizado`); onClose(); }
     setLoading(false);
@@ -533,6 +552,9 @@ function AssignLaneModal({
                   <SelectItem key={u.id} value={u.id} className="text-white">
                     <span>
                       {u.full_name ?? u.email}
+                      {u.preferred_lane === cell?.lane && (
+                        <span className="ml-1 text-[10px] text-yellow-400">★ {cell?.lane}</span>
+                      )}
                       {u.role === "admin" && <span className="ml-1 text-xs text-zinc-400">(admin)</span>}
                     </span>
                   </SelectItem>
@@ -540,9 +562,26 @@ function AssignLaneModal({
               </SelectContent>
             </Select>
             <p className="text-xs text-zinc-500">
-              El cronometrista verá este carril cuando actives la manga.
+              ★ indica el cronometrista con carril preferido.
             </p>
           </div>
+
+          {/* Checkbox No se presentó */}
+          <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-3 cursor-pointer hover:border-red-700 transition-colors">
+            <input
+              type="checkbox"
+              checked={noShow}
+              onChange={(e) => setNoShow(e.target.checked)}
+              className="w-4 h-4 accent-red-600"
+            />
+            <div className="flex-1">
+              <p className="text-zinc-200 text-sm font-medium">🚫 No se presentó</p>
+              <p className="text-zinc-500 text-xs">
+                Marca esto si el equipo no pudo correr esta manga. El admin podrá
+                asignarle un tiempo desde Tiempos Registrados.
+              </p>
+            </div>
+          </label>
         </div>
         <div className="grid grid-cols-2 gap-3 pt-2">
           <Button variant="outline" onClick={onClose} disabled={loading} className="border-zinc-600 text-zinc-300">

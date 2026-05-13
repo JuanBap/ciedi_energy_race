@@ -31,6 +31,7 @@ interface HeatAssignment {
   id: string;
   lane: string | null;
   team_id: string;
+  no_show: boolean;
   teams: Team | null;
   runs: Run[];
 }
@@ -92,7 +93,7 @@ export default function LiveScoreboard({
           .select(`
             id, heat_number, test_type, status, started_at,
             heat_assignments(
-              id, lane, team_id,
+              id, lane, team_id, no_show,
               teams(id, name, school, color_hex, shield_url, categories(slug, name)),
               runs(id, time_ms, has_penalty_velocity, status)
             )
@@ -405,10 +406,17 @@ function LaneCard({
 
         {/* Tiempo */}
         <div className="mt-auto">
-          {totalMs !== null ? (
+          {ha.no_show && totalMs === null ? (
+            <div className="flex items-center gap-2">
+              <span className="bg-red-900/60 border border-red-700 text-red-300 text-xs font-black uppercase tracking-widest px-2 py-1 rounded">
+                🚫 No se presentó
+              </span>
+            </div>
+          ) : totalMs !== null ? (
             <div className="flex items-end gap-2">
               <span className="font-mono text-2xl sm:text-3xl font-black tabular-nums text-yellow-400 leading-none">
                 {formatTimePrecise(totalMs)}
+                {ha.no_show && <span className="text-orange-400 text-base" title="Tiempo adjudicado por no presentación">*</span>}
               </span>
               {run?.has_penalty_velocity && (
                 <Badge className="bg-red-600 text-white text-[10px] font-bold mb-1">+10s</Badge>

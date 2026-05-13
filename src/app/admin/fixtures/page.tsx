@@ -17,7 +17,7 @@ export default async function FixturesPage() {
       // Lista de cronometristas + admin (admin puede actuar como timer en emergencia)
       supabase
         .from("users")
-        .select("id, email, full_name, role")
+        .select("id, email, full_name, role, preferred_lane")
         .in("role", ["timer", "admin"])
         .order("full_name"),
       supabase

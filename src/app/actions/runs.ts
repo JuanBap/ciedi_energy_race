@@ -43,43 +43,51 @@ export async function markRunFailed(runId: string) {
   return { success: true };
 }
 
+// Asigna al run el peor tiempo registrado en TODA la prueba (velocity o versatility)
+// + 10s de penalización. Útil cuando un equipo no se presentó y el reglamento
+// indica adjudicar el peor tiempo + 10s.
 export async function assignWorstTimePlusTen(runId: string) {
   await requireAdmin();
   const supabase = await createClient();
 
-  // Get the run's heat to find other times
+  // Obtener el test_type del run para limitar el peor tiempo a la misma prueba
   const { data: run } = await supabase
     .from("runs")
-    .select("heat_assignment_id, heat_assignments(heat_id)")
+    .select("heat_assignment_id, heat_assignments(heats(test_type, event_id))")
     .eq("id", runId)
-    .single();
+    .single() as {
+      data: {
+        heat_assignment_id: string;
+        heat_assignments: { heats: { test_type: string; event_id: string } | null } | null;
+      } | null;
+    };
 
-  if (!run) return { error: "Run not found" };
+  if (!run) return { error: "Run no encontrado" };
+  const testType = run.heat_assignments?.heats?.test_type;
+  const eventId = run.heat_assignments?.heats?.event_id;
+  if (!testType || !eventId) return { error: "Faltan datos del heat" };
 
-  const heatId = (run.heat_assignments as { heat_id: string }).heat_id;
-
-  // Get max time in this heat
-  const { data: otherRuns } = await supabase
+  // Peor tiempo registrado en TODA la prueba del evento (no solo en esta manga)
+  const { data: allRuns } = await supabase
     .from("runs")
-    .select("time_ms, has_penalty_velocity, heat_assignments!inner(heat_id)")
-    .eq("heat_assignments.heat_id", heatId)
+    .select("time_ms, has_penalty_velocity, heat_assignments!inner(heats!inner(event_id, test_type))")
+    .eq("heat_assignments.heats.event_id", eventId)
+    .eq("heat_assignments.heats.test_type", testType)
     .eq("status", "recorded")
     .neq("id", runId);
 
-  if (!otherRuns || otherRuns.length === 0) {
-    return { error: "No hay otros tiempos en esta manga para calcular el peor" };
+  if (!allRuns || allRuns.length === 0) {
+    return { error: `No hay otros tiempos registrados en ${testType} para calcular el peor.` };
   }
 
-  const maxTime = Math.max(
-    ...otherRuns.map(
-      (r) => (r.time_ms ?? 0) + (r.has_penalty_velocity ? 10000 : 0)
-    )
+  const worstMs = Math.max(
+    ...allRuns.map((r) => (r.time_ms ?? 0) + (r.has_penalty_velocity ? 10000 : 0))
   );
 
   const { error } = await supabase
     .from("runs")
     .update({
-      time_ms: maxTime + 10000,
+      time_ms: worstMs + 10000,
       has_penalty_velocity: false,
       status: "recorded",
     })
@@ -87,7 +95,11 @@ export async function assignWorstTimePlusTen(runId: string) {
 
   if (error) return { error: error.message };
   revalidatePath("/admin/runs");
-  return { success: true };
+  revalidatePath("/admin/heats");
+  revalidatePath("/admin/fixtures");
+  revalidatePath("/live");
+  revalidatePath("/scores");
+  return { success: true, assignedMs: worstMs + 10000 };
 }
 
 export async function reprogramRun(runId: string) {

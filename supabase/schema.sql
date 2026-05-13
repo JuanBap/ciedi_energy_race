@@ -20,12 +20,13 @@ create type user_role     as enum ('admin','timer','judge');
 -- USERS (tabla propia, sin auth.users)
 -- ============================================================
 create table users (
-  id            uuid        primary key default gen_random_uuid(),
-  email         text        not null unique,
-  password_hash text        not null,
-  role          user_role   not null default 'timer',
-  full_name     text,
-  created_at    timestamptz not null default now()
+  id             uuid        primary key default gen_random_uuid(),
+  email          text        not null unique,
+  password_hash  text        not null,
+  role           user_role   not null default 'timer',
+  full_name      text,
+  preferred_lane lane_type,
+  created_at     timestamptz not null default now()
 );
 
 -- ============================================================
@@ -96,6 +97,7 @@ create table heat_assignments (
   team_id       uuid      not null references teams(id) on delete cascade,
   lane          lane_type,
   timer_user_id uuid      references users(id) on delete set null,
+  no_show       boolean   not null default false,
   unique (heat_id, team_id)
 );
 

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { updateRun, markRunFailed, assignWorstTimePlusTen, reprogramRun } from "@/app/actions/runs";
+import { setNoShow } from "@/app/actions/fixtures";
 import { toast } from "sonner";
 import { formatTimePrecise } from "@/lib/utils";
 
@@ -23,7 +24,9 @@ interface Run {
   edited_by: string | null;
   edited_at: string | null;
   heat_assignments: {
+    id: string;
     lane: string | null;
+    no_show: boolean;
     teams: { id: string; name: string; school: string; color_hex: string } | null;
     heats: { heat_number: number; test_type: string; status: string } | null;
   } | null;
@@ -49,7 +52,7 @@ export default function RunsManager({ runs: initialRuns }: { runs: Run[] }) {
       .select(`
         *,
         heat_assignments(
-          lane,
+          id, lane, no_show,
           teams(id, name, school, color_hex),
           heats(heat_number, test_type, status)
         )
@@ -160,6 +163,7 @@ function RunSection({
                 <TableHead className="text-zinc-400">Manga</TableHead>
                 <TableHead className="text-zinc-400">Carril</TableHead>
                 <TableHead className="text-zinc-400">Equipo</TableHead>
+                <TableHead className="text-zinc-400">Presentación</TableHead>
                 <TableHead className="text-zinc-400">Tiempo</TableHead>
                 <TableHead className="text-zinc-400">Penalización</TableHead>
                 <TableHead className="text-zinc-400">Estado</TableHead>
@@ -172,8 +176,9 @@ function RunSection({
                 const penaltyMs = run.has_penalty_velocity ? 10000 : 0;
                 const totalMs = run.time_ms != null ? run.time_ms + penaltyMs : null;
 
+                const noShow = ha?.no_show ?? false;
                 return (
-                  <TableRow key={run.id} className="border-zinc-700">
+                  <TableRow key={run.id} className={`border-zinc-700 ${noShow ? "bg-red-950/20" : ""}`}>
                     <TableCell className="text-white font-mono">
                       M{ha?.heats?.heat_number}
                     </TableCell>
@@ -191,8 +196,24 @@ function RunSection({
                         <span className="text-zinc-200">{ha?.teams?.name ?? "—"}</span>
                       </div>
                     </TableCell>
+                    <TableCell>
+                      {noShow ? (
+                        <Badge className="bg-red-900 text-red-200 text-[10px] font-bold uppercase">
+                          🚫 No se presentó
+                        </Badge>
+                      ) : (
+                        <span className="text-green-400 text-xs">✓ Sí</span>
+                      )}
+                    </TableCell>
                     <TableCell className="font-mono text-white">
-                      {totalMs != null ? formatTimePrecise(totalMs) : "—"}
+                      {totalMs != null ? (
+                        <span className={noShow ? "text-orange-400" : ""}>
+                          {formatTimePrecise(totalMs)}
+                          {noShow && totalMs > 0 && <span className="text-orange-500 text-xs ml-1">*</span>}
+                        </span>
+                      ) : (
+                        noShow ? <span className="text-red-400 italic text-xs">Sin tiempo asignado</span> : "—"
+                      )}
                     </TableCell>
                     <TableCell className="text-sm">
                       {run.has_penalty_velocity ? (
@@ -293,6 +314,37 @@ function EditRunDialog({ run, onClose }: { run: Run | null; onClose: () => void 
     setLoading(false);
   }
 
+  async function handleWorstPlus10() {
+    if (!run) return;
+    setLoading(true);
+    const result = await assignWorstTimePlusTen(run.id);
+    if (result?.error) {
+      toast.error(result.error);
+    } else {
+      const assigned = (result as { assignedMs?: number }).assignedMs;
+      toast.success(
+        assigned
+          ? `Tiempo adjudicado: ${Math.floor(assigned / 60000)}:${String(Math.floor((assigned % 60000) / 1000)).padStart(2, "0")} (peor + 10s)`
+          : "Peor tiempo + 10s asignado"
+      );
+      onClose();
+    }
+    setLoading(false);
+  }
+
+  async function handleToggleNoShow() {
+    if (!run?.heat_assignments) return;
+    const haId = run.heat_assignments.id;
+    if (!haId) return;
+    setLoading(true);
+    const r = await setNoShow(haId, !run.heat_assignments.no_show);
+    if (r?.error) toast.error(r.error);
+    else toast.success(run.heat_assignments.no_show ? "Marcado como sí presentado" : "Marcado como NO SE PRESENTÓ");
+    setLoading(false);
+  }
+
+  const isNoShow = run?.heat_assignments?.no_show ?? false;
+
   return (
     <Dialog
       open={!!run}
@@ -308,7 +360,33 @@ function EditRunDialog({ run, onClose }: { run: Run | null; onClose: () => void 
               <strong className="text-white">{run.heat_assignments?.teams?.name}</strong> — M
               {run.heat_assignments?.heats?.heat_number}
               {run.heat_assignments?.lane && ` · ${run.heat_assignments.lane}`}
+              {run.heat_assignments?.heats?.test_type && (
+                <span className="ml-2 text-zinc-500 text-xs uppercase">
+                  ({run.heat_assignments.heats.test_type === "velocity" ? "velocidad" : "versatilidad"})
+                </span>
+              )}
             </p>
+
+            {/* Banner si el equipo no se presentó */}
+            {isNoShow && (
+              <div className="rounded-lg border border-red-700 bg-red-950/40 p-3 space-y-2">
+                <p className="text-red-300 text-sm font-bold flex items-center gap-2">
+                  🚫 ESTE EQUIPO NO SE PRESENTÓ
+                </p>
+                <p className="text-red-400/80 text-xs">
+                  Según el reglamento, debes adjudicar el peor tiempo registrado en la
+                  prueba + 10 segundos. Usa el botón naranja para calcularlo automáticamente.
+                </p>
+                <Button
+                  onClick={handleWorstPlus10}
+                  disabled={loading}
+                  className="w-full bg-orange-600 hover:bg-orange-500 text-white font-bold"
+                >
+                  ⏱ Asignar peor tiempo + 10s (auto)
+                </Button>
+              </div>
+            )}
+
             <div className="space-y-2">
               <label className="text-zinc-300 text-sm">Tiempo (MM:SS)</label>
               <Input
@@ -329,6 +407,20 @@ function EditRunDialog({ run, onClose }: { run: Run | null; onClose: () => void 
                 Penalización +10s
               </label>
             </div>
+
+            {/* Toggle no_show */}
+            <button
+              onClick={handleToggleNoShow}
+              disabled={loading}
+              className={`w-full text-xs rounded-md border px-3 py-2 transition-colors ${
+                isNoShow
+                  ? "border-green-700 text-green-400 hover:bg-green-900/30"
+                  : "border-red-700 text-red-400 hover:bg-red-900/30"
+              }`}
+            >
+              {isNoShow ? "✓ Marcar como sí presentado" : "🚫 Marcar como no se presentó"}
+            </button>
+
             {run.edited_at && (
               <p className="text-zinc-600 text-xs">
                 Última edición: {new Date(run.edited_at).toLocaleString("es-CO")}

@@ -12,7 +12,7 @@ export default async function RunsPage() {
     .select(`
       *,
       heat_assignments(
-        lane,
+        id, lane, no_show,
         teams(id, name, school, color_hex),
         heats(heat_number, test_type, status)
       )

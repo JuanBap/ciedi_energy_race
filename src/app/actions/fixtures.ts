@@ -231,7 +231,8 @@ export async function assignLane(
   heatId: string,
   lane: Lane,
   teamId: string,
-  timerUserId: string | null
+  timerUserId: string | null,
+  noShow: boolean = false
 ) {
   await requireAdmin();
   const supabase = await createClient();
@@ -255,12 +256,32 @@ export async function assignLane(
     team_id: teamId,
     lane,
     timer_user_id: timerUserId,
+    no_show: noShow,
   });
 
   if (error) return { error: error.message };
 
   revalidatePath("/admin/fixtures");
   revalidatePath("/admin/heats");
+  revalidatePath("/live");
+  return { success: true };
+}
+
+// Toggle no_show de una asignación específica (sin re-asignar nada)
+export async function setNoShow(heatAssignmentId: string, noShow: boolean) {
+  await requireAdmin();
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("heat_assignments")
+    .update({ no_show: noShow })
+    .eq("id", heatAssignmentId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath("/admin/fixtures");
+  revalidatePath("/admin/heats");
+  revalidatePath("/admin/runs");
   revalidatePath("/live");
   return { success: true };
 }

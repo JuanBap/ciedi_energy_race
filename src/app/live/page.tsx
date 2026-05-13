@@ -16,7 +16,7 @@ export default async function LivePage() {
         .select(`
           id, heat_number, test_type, status, started_at,
           heat_assignments(
-            id, lane, team_id,
+            id, lane, team_id, no_show,
             teams(id, name, school, color_hex, shield_url, categories(slug, name)),
             runs(id, time_ms, has_penalty_velocity, status)
           )
