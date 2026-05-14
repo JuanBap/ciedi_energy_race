@@ -43,6 +43,27 @@ export async function markRunFailed(runId: string) {
   return { success: true };
 }
 
+// Eliminar permanentemente un run de la tabla.
+// La asignación del carril (heat_assignments) se mantiene — solo borra el tiempo.
+// Si después el cronometrista o el admin quieren registrar otro tiempo en esa
+// asignación, simplemente lo crean nuevo.
+export async function deleteRun(runId: string) {
+  await requireAdmin();
+  const supabase = await createClient();
+
+  const { error } = await supabase.from("runs").delete().eq("id", runId);
+  if (error) return { error: error.message };
+
+  // Revalidar todas las páginas que dependen de runs
+  revalidatePath("/admin/runs");
+  revalidatePath("/admin/heats");
+  revalidatePath("/admin/fixtures");
+  revalidatePath("/admin");
+  revalidatePath("/live");
+  revalidatePath("/scores");
+  return { success: true };
+}
+
 // Asigna al run el peor tiempo registrado en TODA la prueba (velocity o versatility)
 // + 10s de penalización. Útil cuando un equipo no se presentó y el reglamento
 // indica adjudicar el peor tiempo + 10s.

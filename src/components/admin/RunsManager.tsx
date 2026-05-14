@@ -7,8 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { updateRun, markRunFailed, assignWorstTimePlusTen, reprogramRun } from "@/app/actions/runs";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { updateRun, markRunFailed, assignWorstTimePlusTen, reprogramRun, deleteRun } from "@/app/actions/runs";
 import { setNoShow } from "@/app/actions/fixtures";
 import { toast } from "sonner";
 import { formatTimePrecise } from "@/lib/utils";
@@ -42,6 +42,7 @@ const STATUS_COLORS: Record<string, string> = {
 export default function RunsManager({ runs: initialRuns }: { runs: Run[] }) {
   const [runs, setRuns] = useState<Run[]>(initialRuns);
   const [editRun, setEditRun] = useState<Run | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Run | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
 
@@ -102,6 +103,15 @@ export default function RunsManager({ runs: initialRuns }: { runs: Run[] }) {
     setLoading(null);
   }
 
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setLoading(deleteTarget.id);
+    const result = await deleteRun(deleteTarget.id);
+    if (result?.error) toast.error(result.error);
+    else { toast.success("Tiempo eliminado"); setDeleteTarget(null); }
+    setLoading(null);
+  }
+
   return (
     <div className="space-y-8">
       <div className="flex items-center gap-2 text-xs text-zinc-500">
@@ -116,6 +126,7 @@ export default function RunsManager({ runs: initialRuns }: { runs: Run[] }) {
         onFail={handleMarkFailed}
         onWorstTime={handleWorstTime}
         onReprogram={handleReprogram}
+        onDelete={setDeleteTarget}
         loading={loading}
       />
       <RunSection
@@ -125,10 +136,17 @@ export default function RunsManager({ runs: initialRuns }: { runs: Run[] }) {
         onFail={handleMarkFailed}
         onWorstTime={handleWorstTime}
         onReprogram={handleReprogram}
+        onDelete={setDeleteTarget}
         loading={loading}
       />
 
       <EditRunDialog run={editRun} onClose={() => setEditRun(null)} />
+      <DeleteRunDialog
+        run={deleteTarget}
+        loading={loading === deleteTarget?.id}
+        onConfirm={handleDelete}
+        onClose={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }
@@ -140,6 +158,7 @@ function RunSection({
   onFail,
   onWorstTime,
   onReprogram,
+  onDelete,
   loading,
 }: {
   title: string;
@@ -148,6 +167,7 @@ function RunSection({
   onFail: (id: string) => void;
   onWorstTime: (id: string) => void;
   onReprogram: (id: string) => void;
+  onDelete: (r: Run) => void;
   loading: string | null;
 }) {
   return (
@@ -260,14 +280,23 @@ function RunSection({
                         {run.status !== "failed" && (
                           <Button
                             size="sm"
-                            variant="destructive"
-                            className="h-6 text-xs"
+                            className="h-6 text-xs bg-zinc-700 hover:bg-zinc-600 text-zinc-200"
                             disabled={loading === run.id}
                             onClick={() => onFail(run.id)}
                           >
                             Fallar
                           </Button>
                         )}
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="h-6 text-xs"
+                          disabled={loading === run.id}
+                          onClick={() => onDelete(run)}
+                          title="Eliminar este registro de tiempo"
+                        >
+                          🗑 Eliminar
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -444,6 +473,69 @@ function EditRunDialog({ run, onClose }: { run: Run | null; onClose: () => void 
             </div>
           </div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DeleteRunDialog({
+  run,
+  loading,
+  onConfirm,
+  onClose,
+}: {
+  run: Run | null;
+  loading: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const team = run?.heat_assignments?.teams?.name ?? "—";
+  const manga = run?.heat_assignments?.heats?.heat_number;
+  const lane = run?.heat_assignments?.lane;
+  const hasTime = run?.time_ms != null;
+
+  return (
+    <Dialog open={!!run} onOpenChange={(o) => !o && !loading && onClose()}>
+      <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md w-[calc(100vw-1.5rem)]">
+        <DialogHeader>
+          <DialogTitle>¿Eliminar este registro?</DialogTitle>
+          <DialogDescription className="text-zinc-400">
+            Esta acción borra el tiempo de la tabla de forma permanente.
+            La asignación del carril en el fixture se mantiene — si necesitas
+            que el equipo vuelva a registrar tiempo, lo puede hacer normalmente.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="rounded-lg border border-zinc-700 bg-zinc-950 p-3 text-sm space-y-1">
+          <p className="text-zinc-200">
+            <strong>{team}</strong>
+            {manga && <span className="text-zinc-500"> · M{manga}</span>}
+            {lane && <span className="text-zinc-500"> · {lane}</span>}
+          </p>
+          {hasTime && (
+            <p className="text-zinc-500 text-xs">
+              Tiempo registrado: <span className="font-mono text-zinc-300">{formatTimePrecise(run!.time_ms!)}</span>
+            </p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 pt-2">
+          <Button
+            variant="outline"
+            onClick={onClose}
+            disabled={loading}
+            className="border-zinc-600 text-zinc-300"
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={onConfirm}
+            disabled={loading}
+          >
+            {loading ? "Eliminando..." : "Eliminar"}
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
