@@ -19,11 +19,11 @@ export default function Footer() {
           Energy Race 2026 · Sistema de cronometraje
         </p>
         <Image
-          src="/ciedi-logo.jpg"
+          src="/ciedi-logo.png"
           alt="CIEDI"
-          width={80}
-          height={40}
-          className="h-6 sm:h-7 w-auto object-contain shrink-0"
+          width={280}
+          height={100}
+          className="h-7 sm:h-9 w-auto object-contain shrink-0"
         />
       </div>
     </footer>

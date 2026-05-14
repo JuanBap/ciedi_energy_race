@@ -19,11 +19,11 @@ export default function HomePage() {
           />
           <div className="w-px h-12 sm:h-14 bg-zinc-700" />
           <Image
-            src="/ciedi-logo.jpg"
+            src="/ciedi-logo.png"
             alt="CIEDI"
-            width={140}
-            height={70}
-            className="h-12 sm:h-16 w-auto object-contain"
+            width={280}
+            height={100}
+            className="h-14 sm:h-20 w-auto object-contain"
             priority
           />
         </div>

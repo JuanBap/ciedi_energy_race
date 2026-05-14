@@ -199,11 +199,11 @@ export default function LiveScoreboard({
           </div>
         </div>
         <Image
-          src="/ciedi-logo.jpg"
+          src="/ciedi-logo.png"
           alt="CIEDI"
-          width={80}
-          height={40}
-          className="h-8 sm:h-10 w-auto object-contain shrink-0"
+          width={280}
+          height={100}
+          className="h-10 sm:h-12 w-auto object-contain shrink-0"
           priority
         />
       </header>

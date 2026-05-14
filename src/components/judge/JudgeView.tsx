@@ -157,11 +157,11 @@ export default function JudgeView({ profile, heats }: { profile: UserProfile; he
             </Button>
           </form>
           <Image
-            src="/ciedi-logo.jpg"
+            src="/ciedi-logo.png"
             alt="CIEDI"
-            width={80}
-            height={40}
-            className="h-7 w-auto object-contain shrink-0 hidden sm:block"
+            width={280}
+            height={100}
+            className="h-9 w-auto object-contain shrink-0 hidden sm:block"
           />
         </div>
       </header>

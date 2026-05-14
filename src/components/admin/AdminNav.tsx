@@ -69,11 +69,11 @@ export default function AdminNav({ profile }: { profile: SessionPayload }) {
             </Button>
           </form>
           <Image
-            src="/ciedi-logo.jpg"
+            src="/ciedi-logo.png"
             alt="CIEDI"
-            width={80}
-            height={40}
-            className="h-8 w-auto object-contain ml-2 hidden sm:block"
+            width={280}
+            height={100}
+            className="h-10 w-auto object-contain ml-2 hidden sm:block"
           />
         </div>
       </div>
