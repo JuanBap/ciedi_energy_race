@@ -189,11 +189,13 @@ export default function ScoresView({
     else if (podiumStep >= 5 && podiumStep <= 8) setTab("hpvs");
   }, [podiumStep, published]);
 
-  // Mejor tiempo total (suma velocidad + versatilidad) por categoría
+  // Mejor tiempo total (suma de tiempos disponibles) por categoría.
+  // Requiere al menos un tiempo registrado (velocidad O versatilidad);
+  // los nulls cuentan como 0 para no excluir equipos con datos parciales.
   const bestTimeRows = useMemo(() => {
     const candidates = rankings
       .filter((r) => r.category_slug === tab)
-      .filter((r) => r.time_velocity_total !== null && r.time_versatility_total !== null)
+      .filter((r) => r.time_velocity_total !== null || r.time_versatility_total !== null)
       .map((r) => ({
         ...r,
         combinedMs: (r.time_velocity_total ?? 0) + (r.time_versatility_total ?? 0),
@@ -354,28 +356,34 @@ function BestTimeCard({
           {/* Tiempo total */}
           <div className="mt-3">
             <p className="text-zinc-500 text-xs uppercase tracking-widest mb-1">
-              Tiempo total (velocidad + versatilidad)
+              {team.time_velocity_total !== null && team.time_versatility_total !== null
+                ? "Tiempo total (velocidad + versatilidad)"
+                : team.time_velocity_total !== null
+                ? "Tiempo total — Velocidad"
+                : "Tiempo total — Versatilidad"}
             </p>
             <p className="font-mono text-5xl sm:text-6xl font-black tabular-nums text-cyan-400 leading-none">
               {formatTimePrecise(combinedMs)}
             </p>
           </div>
 
-          {/* Desglose */}
-          <div className="mt-2 flex gap-6 text-xs sm:text-sm">
-            <div>
-              <span className="text-zinc-500">Velocidad: </span>
-              <span className="font-mono text-zinc-300 tabular-nums">
-                {team.time_velocity_total !== null ? formatTimePrecise(team.time_velocity_total) : "—"}
-              </span>
+          {/* Desglose (solo si hay ambos tiempos) */}
+          {team.time_velocity_total !== null && team.time_versatility_total !== null && (
+            <div className="mt-2 flex gap-6 text-xs sm:text-sm">
+              <div>
+                <span className="text-zinc-500">Velocidad: </span>
+                <span className="font-mono text-zinc-300 tabular-nums">
+                  {formatTimePrecise(team.time_velocity_total)}
+                </span>
+              </div>
+              <div>
+                <span className="text-zinc-500">Versatilidad: </span>
+                <span className="font-mono text-zinc-300 tabular-nums">
+                  {formatTimePrecise(team.time_versatility_total)}
+                </span>
+              </div>
             </div>
-            <div>
-              <span className="text-zinc-500">Versatilidad: </span>
-              <span className="font-mono text-zinc-300 tabular-nums">
-                {team.time_versatility_total !== null ? formatTimePrecise(team.time_versatility_total) : "—"}
-              </span>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
