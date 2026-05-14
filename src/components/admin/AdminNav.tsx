@@ -68,6 +68,13 @@ export default function AdminNav({ profile }: { profile: SessionPayload }) {
               Salir
             </Button>
           </form>
+          <Image
+            src="/ciedi-logo.jpg"
+            alt="CIEDI"
+            width={80}
+            height={40}
+            className="h-8 w-auto object-contain ml-2 hidden sm:block"
+          />
         </div>
       </div>
     </header>

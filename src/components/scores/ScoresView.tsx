@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { formatTimePrecise } from "@/lib/utils";
 import type { RankingRow } from "@/types/database";
+import Footer from "@/components/Footer";
 
 interface RunRow {
   heat_assignments: {
@@ -205,20 +207,33 @@ export default function ScoresView({
   }, [rankings, tab]);
 
   return (
-    <main className="min-h-screen bg-black text-white">
-      <header className="bg-zinc-900 border-b border-zinc-800 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between sticky top-0 z-10">
-        <div>
-          <p className="text-yellow-400 text-[10px] sm:text-xs font-medium tracking-widest uppercase">
-            CIEDI — E5 Challenge
-          </p>
-          <h1 className="text-xl sm:text-2xl font-bold">Puntajes — {event?.name ?? "Energy Race 2026"}</h1>
+    <main className="min-h-screen bg-black text-white flex flex-col">
+      <header className="bg-zinc-900 border-b border-zinc-800 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-3 sticky top-0 z-10">
+        <Image
+          src="/e5-logo.jpg"
+          alt="E5 Energy Race 2026"
+          width={120}
+          height={40}
+          className="h-8 sm:h-10 w-auto object-contain shrink-0"
+          priority
+        />
+        <div className="text-center flex-1 min-w-0">
+          <h1 className="text-base sm:text-2xl font-bold truncate">Puntajes — {event?.name ?? "Energy Race 2026"}</h1>
+          <div className="flex items-center justify-center gap-2 mt-0.5">
+            <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400 animate-pulse" : "bg-zinc-600"}`} />
+            <span className="text-zinc-400 text-[10px] sm:text-xs uppercase tracking-wider">
+              {connected ? "EN VIVO" : "Conectando..."}
+            </span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${connected ? "bg-green-400 animate-pulse" : "bg-zinc-600"}`} />
-          <span className="text-zinc-400 text-xs sm:text-sm">
-            {connected ? "EN VIVO" : "Conectando..."}
-          </span>
-        </div>
+        <Image
+          src="/ciedi-logo.jpg"
+          alt="CIEDI"
+          width={80}
+          height={40}
+          className="h-8 sm:h-10 w-auto object-contain shrink-0"
+          priority
+        />
       </header>
 
       {/* Mensaje de suspense cuando los resultados no están publicados */}
@@ -293,6 +308,9 @@ export default function ScoresView({
           )}
         </>
       )}
+      <div className="mt-auto">
+        <Footer />
+      </div>
     </main>
   );
 }

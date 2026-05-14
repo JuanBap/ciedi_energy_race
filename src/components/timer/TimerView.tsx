@@ -308,6 +308,13 @@ export default function TimerView({ profile, assignment, heats: initialHeats, te
               Salir
             </Button>
           </form>
+          <Image
+            src="/ciedi-logo.jpg"
+            alt="CIEDI"
+            width={80}
+            height={40}
+            className="h-6 sm:h-7 w-auto object-contain shrink-0 hidden sm:block"
+          />
         </div>
       </header>
 
